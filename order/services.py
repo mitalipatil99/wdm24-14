@@ -7,6 +7,7 @@ import uuid
 import redis
 from aio_pika import IncomingMessage
 from msgspec import msgpack, Struct
+import redis.exceptions
 
 from model import AMQPMessage
 from amqp_client import AMQPClient
@@ -94,5 +95,12 @@ async def batch_init_users_db(kv_pairs):
 async def add_item_db(order_id, order_entry):
     try:
         db.set(order_id, msgpack.encode(order_entry))
+    except redis.exceptions.RedisError:
+        raise RedisDBError(Exception)
+    
+
+async def confirm_order(order_id, order_entry):
+    try:
+        db.set(order_id, msgpack.encode(order_entry))   
     except redis.exceptions.RedisError:
         raise RedisDBError(Exception)
