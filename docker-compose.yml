@@ -1,14 +1,14 @@
 version: "3"
 services:
   so-rabbit:
-    image: rabbitmq:3.9.15-management-alpine
+    image: rabbitmq:3.13.2-management
     restart: unless-stopped
     env_file:
       - env/rabbitmq.env
     ports:
       - '15672:15672'
-    expose:
-      - '5671'
+      - '5672:5672'
+    
   
   gateway:
     image: nginx:1.25-bookworm
