@@ -1,16 +1,19 @@
 import logging
 import os
 import atexit
-import logging
-import os
-import atexit
 import uuid
-
+import json
 import redis
 
 from msgspec import msgpack, Struct
-from exceptions import RedisDBError, InsufficientStockError
+from exceptions import RedisDBError, ItemNotFoundError, InsufficientStockError
 from flask import Flask, jsonify, abort, Response
+
+from aio_pika import IncomingMessage
+from msgspec import msgpack, Struct
+
+from model import AMQPMessage
+from amqp_client import AMQPClient
 
 class StockValue(Struct):
     stock: int
@@ -29,7 +32,7 @@ atexit.register(close_db_connection)
 
 async def get_item(item_id: str) -> str:
     try:
-        return db.get(item_id)
+        entry = db.get(item_id)
     except redis.exceptions.RedisError:
         raise RedisDBError
     entry: StockValue | None = msgpack.decode(entry, type=StockValue) if entry else None
@@ -39,9 +42,9 @@ async def get_item(item_id: str) -> str:
     return entry
         
 
-async def set_new_item(price: int):
+async def set_new_item(value: int):
     key = str(uuid.uuid4())
-    value = msgpack.encode(StockValue(stock=0, price=int(price)))
+    value = msgpack.encode(StockValue(stock=0, price=int(value)))
     try:
         db.set(key, value)
     except redis.exceptions.RedisError:
@@ -93,8 +96,8 @@ async def stock_command_event_processor(message: IncomingMessage):
         client = message.headers.get('CLIENT')
 
         stock_order = json.loads(str(message.body.decode('utf-8')))
-        item_id = booking.get('item_id')
-        amount = booking.get('amount')
+        item_id = stock_order.get('item_id')
+        amount = stock_order.get('amount')
         response_obj: AMQPMessage = None
 
         if client == 'ORDER_REQUEST_ORCHESTRATOR' and command == 'ADD_STOCK':
@@ -135,6 +138,3 @@ async def stock_command_event_processor(message: IncomingMessage):
             response_obj
         )
         await amqp_client.connection.close()
-
-
-
