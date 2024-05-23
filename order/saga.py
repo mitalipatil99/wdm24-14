@@ -1,229 +1,184 @@
-import asyncio
-import contextlib
-import json
-import os
-from typing import Any, Callable, Coroutine, List, MutableMapping, ParamSpec, TypeVar
-from uuid import uuid4
+import traceback
+from dataclasses import dataclass
+from inspect import isawaitable
+from typing import Any, Callable, NewType, Optional, Union
 
-from aio_pika import Message, connect_robust
-from aio_pika.abc import AbstractIncomingMessage
-from requests import Session
-
-from model import AMQPMessage
-from services import  confirm_order
-
-P = ParamSpec('P')
-T = TypeVar('T')
+TracebackStr = NewType('TracebackStr', str)
 
 
-class SagaReplyHandler:
-    reply_status: str | None
-    action: Coroutine
-    is_compensation: bool = False
-
+class SagaError(Exception):
     def __init__(
-            self, reply_status: str, action: Coroutine, is_compensation: bool = False
-    ) -> None:
-        self.reply_status = reply_status
-        self.action = action
-        self.is_compensation = is_compensation
+        self,
+        failed_step_index: int,
+        action_exception: Exception,
+        action_traceback: TracebackStr,
+        compensation_exception_tracebacks: dict[int, tuple[Exception, TracebackStr]],
+    ):
+        self.failed_step_index = failed_step_index
+        self.action_exception = action_exception
+        self.action_traceback = action_traceback
+        self.compensation_exception_tracebacks = compensation_exception_tracebacks
 
-
-class SagaRPC:
-    data: Any = None
-
-    def __init__(self) -> None:
-        self.futures: MutableMapping[str, asyncio.Future] = {}
-        self.loop = asyncio.get_running_loop()
-
-    @contextlib.asynccontextmanager
-    async def connect(self) -> "SagaRPC":
-        try:
-            self.connection = await connect_robust(
-                os.environ['RABBITMQ_BROKER_URL'], loop=self.loop,
-            )
-            self.channel = await self.connection.channel()
-
-            self.exchange = await self.channel.declare_exchange(
-                'ORDER_TX_EVENT_STORE',
-                type='topic',
-                durable=True
-            )
-
-            self.callback_queue = await self.channel.declare_queue(exclusive=True)
-            await self.callback_queue.bind(self.exchange)
-            await self.callback_queue.consume(self.reply_event_processor)
-
-            yield self
-
-        finally:
-            await self.connection.close()
-
-    def reply_event_processor(self, message: AbstractIncomingMessage) -> None:
-        if message.correlation_id is None:
-            print(f'Bad message {message!r}')
-            return
-
-        try:
-            future: asyncio.Future = self.futures.pop(message.correlation_id)
-            future.set_result(message.body)
-        except KeyError:
-            print(f'Unknown correlation_id! - {message.correlation_id}')
-
-    async def start_workflow(self) -> Any:
-        for step_definition in await self.definitions:
-            is_step_success = await step_definition
-            if not is_step_success:
-                break
-
-        # If request booking workflow succeeded we can return the data
-        return self.data
-
-    async def invoke_local(self, action: Callable[P, T]):
-        return await action()
-
-    async def invoke_participant(
-            self, command: str, data: dict, on_reply: List[SagaReplyHandler] | None = None
-    ) -> bool:
-
-        if on_reply is None:
-            on_reply = []
-
-        correlation_id = str(uuid4())
-        future = self.loop.create_future()
-
-        self.futures[correlation_id] = future
-
-        await self.exchange.publish(
-            Message(
-                str(json.dumps(data)).encode(),
-                content_type='application/json',
-                correlation_id=correlation_id,
-                reply_to=self.callback_queue.name,
-                headers={
-                    'COMMAND': command.replace('.', '_').upper(),
-                    'CLIENT': 'ORDER_REQUEST_ORCHESTRATOR',
-                }
-            ),
-            routing_key=command,
+    def __str__(self):
+        header_msg = 'A critical error occurred during the saga execution, leading to transaction failure and compensation attempts.'
+        error_detail_msg = (
+            f'Transaction failed at step index {self.failed_step_index}: '
+            f'An unexpected {type(self.action_exception).__name__} occurred, triggering the compensation process.'
+            f'\n{self.format_traceback_indentation(self.action_traceback, 2)}'
         )
+        compensation_error_msgs = ''
 
-        # Wait for the reply event processor to received a reponse from
-        # the participating service.
-        response_data: bytes = await future
-        decoded_data = json.loads(response_data.decode('utf-8'))
-        reply_state = decoded_data.get('reply_state')
-
-        # If response reply status execute a compensation command
-        # we need to stop the succeeding step by returning `False`.
-        to_next_definition = True
-        for reply_handler in on_reply:
-            saga_reply_handler: SagaReplyHandler = reply_handler
-
-            if reply_state == saga_reply_handler.reply_status:
-                if saga_reply_handler.is_compensation:
-                    to_next_definition = False
-
-                await saga_reply_handler.action
-
-        return to_next_definition
-
-    @property
-    async def definitions(self) -> List[Coroutine]:
-        raise NotImplementedError
-
-
-class CreateOrderRequestSaga(SagaRPC):
-    data: AMQPMessage = None
-    order_id: str = None
-
-    def __init__(self, order_uuid: str, items: dict[str, int], cost,user_id, order_entry) -> None:
-        super().__init__()
-        self.completed_order = None
-        self.order_uuid = order_uuid
-        self.order_entry = order_entry
-        self.add_items = items
-        self.cost = cost
-        self.user_id = user_id
-
-    @property
-    async def definitions(self):
-        stock_definations = []
-        past_stock_definations = []
-        for item_id, quantity in self.items():
-            stock_definations.append(
-                self.invoke_participant(
-                command='stock.block',
-                data= {"item_id": item_id, "quantity": quantity},
-                on_reply=[
-                    SagaReplyHandler(
-                        'STOCK_UNAVAILABLE',
-                        action=self.invoke_participant(
-                            command='stock.unblock',
-                            data = past
-                        ),
-                        is_compensation=True
-                    ) for past in past_stock_definations
+        if any(self.compensation_exception_tracebacks.values()):
+            compensation_error_msgs = 'Compensations encountered errors:\n' + '\n'.join(
+                [
+                    f'  - (step index {step}): Compensation failed due to a {type(exc).__name__}: {exc}'
+                    f'\n{self.format_traceback_indentation(traceback_str, 6)}'
+                    for step, (exc, traceback_str) in self.compensation_exception_tracebacks.items()
                 ]
             )
-            )
-            past_stock_definations.append({"item_id": item_id, "quantity": quantity})
-        return [
-            *stock_definations,
-            self.invoke_participant(
-                command='user.subtract_credit',
-                data= {"user_id":self.user_id, "amount": self.cost},
-                on_reply= [
-                        SagaReplyHandler(
-                            'STOCK_UNAVAILABLE',
-                            action=self.invoke_participant(
-                                command='stock.unblock',
-                                data = past
-                            ),
-                            is_compensation=True
-                    ) for past in past_stock_definations
-                ]
 
-                
-            ),
-            self.invoke_local(action=self.completed_order)
-        ]
-    
-    async def completed_order(self):
-        try:
-            await confirm_order(self.order_id, self.order_entry)
-        except Exception:
-            pass
+        return '\n\n'.join([header_msg, error_detail_msg, compensation_error_msgs]).strip()
 
-    # async def create_order(self) -> bool:
-    #     async with Session() as session:
-    #         self.data = await create_order(session, self.order_uuid)
-    #         return self.data.id is not None
+    def format_traceback_indentation(self, traceback_str: str, indent: int = 2) -> str:
+        """Formats a traceback string by adding indentation to each line.
 
-    # async def add_items(self) -> bool:
-    #     async with Session() as session:
-    #         self.data = await add_items_to_order(session, self.order_uuid)
-    #         return self.data.items is not None
+        Args:
+            traceback_str (str): The traceback string to format.
+            indent (int, optional): The number of spaces to indent each line. Defaults to 2.
 
-    # async def checkout_order(self) -> bool:
-    #     async with Session() as session:
-    #         self.data = await checkout_order(session, self.order_uuid)
-    #         return self.data.status == 'checked_out'
+        Returns:
+            str: The formatted traceback string with indentation.
+        """
+        if '\n' in traceback_str:
+            return '\n'.join([' ' * indent + '╎' + line for line in traceback_str.splitlines()])
+        else:
+            return traceback_str
 
-    # async def completed_order(self) -> bool:
-    #     async with Session() as session:
-    #         order = await order_details_by_order_ref_no(session, self.data.content.order_ref_no)
-    #         order.status = 'completed'
 
-    #         # Updated data
-    #         self.data = await update_order(session, order)
-    #         return self.data.content.status == 'completed'
+@dataclass
+class Action:
+    action: Callable[..., Any]
+    compensation: Callable[..., Any]
+    compensation_args: Optional[Union[tuple[Any], list[Any]]] = None
+    result: Any = None
 
-    # async def failed_order(self) -> bool:
-    #     async with Session() as session:
-    #         order = await order_details_by_order_ref_no(session, self.data.content.order_ref_no)
-    #         order.status = 'failed'
+    async def act(self, *args):
+        result = self.action(*(args if self.action.__code__.co_varnames else []))
+        if isawaitable(result):
+            result = await result
 
-    #         # Updated data
-    #         self.data = await update_order(session, order)
-    #         return self.data.content.status == 'failed'
+        return result
+
+    async def compensate(self):
+        result = self.compensation(
+            *(self.compensation_args if self.compensation.__code__.co_varnames else [])
+        )
+        if isawaitable(result):
+            result = await result
+
+        return result
+
+
+@dataclass
+class Saga:
+    """
+    The Saga class provides a way to manage Saga-style transactions using a sequence of steps,
+    where each step consists of an operation and a compensation function. Transactions will be
+    executed sequentially, and step-by-step compensation is supported.
+
+    Methods:
+        execute(self) -> Any:
+            Execute the saga, sequentially executing each action and storing the result for
+            compensation use in case of failure. If any action fails, compensation functions will
+            be called in reverse order for each executed action.
+    """
+
+    steps: list[Action]
+
+    async def execute(self):
+        args = []
+        for index, action in enumerate(self.steps):
+            if isinstance(action, Action):
+                try:
+                    actioned_result = await action.act(*args)
+                    if actioned_result is None:
+                        args = []
+                    elif isinstance(actioned_result, (list, tuple)):
+                        args = actioned_result
+                    else:
+                        args = (actioned_result,)
+                    action.compensation_args = args
+                    action.result = actioned_result
+                except Exception as exc:
+                    action_traceback_str = TracebackStr(traceback.format_exc())
+                    compensation_exceptions = await self._run_compensations(index)
+                    raise SagaError(index, exc, action_traceback_str, compensation_exceptions)
+
+        return self
+
+    async def _run_compensations(self, last_action_index: int) -> dict[int, tuple[Exception, TracebackStr]]:
+        compensation_exceptions = {}
+        for compensation_index in range(last_action_index - 1, -1, -1):
+            try:
+                action = self.steps[compensation_index]
+                await action.compensate()
+            except Exception as exc:
+                _, _, traceback_str = traceback.format_exc().partition(
+                    'During handling of the above exception, another exception occurred:\n\n'
+                )
+                compensation_exceptions[compensation_index] = (exc, TracebackStr(traceback_str))
+
+        return compensation_exceptions
+
+
+class OrchestrationBuilder:
+    """
+    OrchestrationBuilder is a utility class for building a saga-style transaction using a series of
+    steps, where each step consists of an action and a compensation function. The transaction will be
+    executed in sequence and support compensation on a per-step basis.
+
+    Usage:
+    ```
+    builder = OrchestrationBuilder()
+    builder.add_step(action_1, compensation_1)
+    builder.add_step(action_2, compensation_2)
+    ...
+    builder.add_step(action_n, compensation_n)
+    saga = await builder.execute()
+    ```
+
+    Methods:
+    - add_step(action: Callable[..., Any], compensation: Callable[..., Any]) -> OrchestrationBuilder:
+        Adds a step to the transaction, consisting of an action and a compensation function.
+        Both action and compensation functions can be synchronous or asynchronous. Returns
+        the current OrchestrationBuilder instance.
+
+    - execute() -> Saga:
+        Builds and executes a Saga instance representing the transaction. When an action function
+        completes successfully, its response will be passed to the next action function as a parameter.
+        If an action function fails, the Saga will compensate for the previously executed actions.
+
+        For example, if action_n fails, the compensations will be executed in the following order:
+        compensation_n-1, compensation_n-2, ..., compensation_1. Finally raises a SagaError.
+
+    OrchestrationBuilder instance methods should be chained together to build up the desired
+    sequence of actions and compensations.
+
+    When the action function completes, its response will be passed to the corresponding compensation
+    function as a parameter.
+
+    See also:
+    - Saga
+    """
+
+    def __init__(self):
+        self.steps: list[Action] = []
+
+    def add_step(self, action: Callable[..., Any], compensation: Callable[..., Any]) -> 'OrchestrationBuilder':
+        action_ = Action(action, compensation)
+        self.steps.append(action_)
+
+        return self
+
+    async def execute(self) -> Saga:
+        return await Saga(self.steps).execute()
