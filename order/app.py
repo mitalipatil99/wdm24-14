@@ -12,7 +12,9 @@ from msgspec import msgpack, Struct
 from flask import Flask, jsonify, abort, Response
 from exceptions import RedisDBError
 from services import add_item_db, get_order_by_id_db, create_order_db, batch_init_users_db, add_item_db
-from saga import CreateOrderRequestSaga
+from orchestrator import CreateOrderRequestSaga
+
+from amqp_client import AMQPClient
 
 DB_ERROR_STR = "DB error"
 REQ_ERROR_STR = "Requests error"
@@ -26,6 +28,8 @@ db: redis.Redis = redis.Redis(host=os.environ['REDIS_HOST'],
                               password=os.environ['REDIS_PASSWORD'],
                               db=int(os.environ['REDIS_DB']))
 
+broker = AMQPClient(app.logger)
+broker.connect()
 
 def close_db_connection():
     db.close()
@@ -50,6 +54,11 @@ async def get_order_from_db(order_id: str) -> OrderValue | None:
         abort(400, f"Order: {order_id} not found!")
     return entry
 
+
+# @app.post("/health")
+# async def health_check():
+#     broker.send_message({"hello":"world"})
+#     return jsonify({"he":"he"})
 
 @app.post('/create/<user_id>')
 async def create_order(user_id: str):
@@ -103,7 +112,7 @@ async def find_order(order_id: str):
 
 async def send_post_request(url: str):
     try:
-        response = await requests.post(url)
+        response =  requests.post(url)
     except requests.exceptions.RequestException:
         abort(400, REQ_ERROR_STR)
     else:
@@ -112,7 +121,7 @@ async def send_post_request(url: str):
 
 async def send_get_request(url: str):
     try:
-        response = await requests.get(url)
+        response =  requests.get(url)
     except requests.exceptions.RequestException:
         abort(400, REQ_ERROR_STR)
     else:
@@ -166,9 +175,9 @@ async def checkout(order_id: str):
     # #     rollback_stock(removed_items)
     # #     abort(400, "User out of credit")
     # order_entry.paid = True
-    saga = CreateOrderRequestSaga(order_id, items_quantities, order_entry.total_cost, order_entry.user_id, order_entry)
-    async with saga.connect() as saga:
-            await saga.start_workflow()
+    saga = await CreateOrderRequestSaga(order_entry, order_entry.total_cost, order_entry.user_id)
+    # async with saga.connect() as saga:
+    #         await saga.start_workflow()
     # order_entry.paid = True   
     # try:
     #     db.set(order_id, msgpack.encode(order_entry))

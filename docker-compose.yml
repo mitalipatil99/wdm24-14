@@ -1,14 +1,19 @@
 version: "3"
 services:
   so-rabbit:
-    image: rabbitmq:3.9.15-management-alpine
-    restart: unless-stopped
-    env_file:
-      - env/rabbitmq.env
+    image: 'rabbitmq:3.13.2-management'
     ports:
+      - '5672:5672'
       - '15672:15672'
-    expose:
-      - '5671'
+    environment:
+      AMQP_URL: 'amqp://rabbitmq?connection_attempts=5&retry_delay=5'
+      RABBITMQ_DEFAULT_USER: "guest"
+      RABBITMQ_DEFAULT_PASS: "guest"
+    healthcheck:
+      test: rabbitmq-diagnostics check_port_connectivity
+      interval: 2s
+      timeout: 2s
+      retries: 30
   
   gateway:
     image: nginx:1.25-bookworm
@@ -30,8 +35,10 @@ services:
     env_file:
       - env/order_redis.env
     depends_on:
-      - order-db
-      - so-rabbit
+      order-db:
+        condition: service_started
+      so-rabbit:
+        condition: service_healthy
 
   order-db:
     image: redis:7.2-bookworm
@@ -44,8 +51,10 @@ services:
     env_file:
       - env/stock_redis.env
     depends_on:
-      - stock-db
-      - so-rabbit
+      stock-db:
+        condition: service_started
+      so-rabbit:
+        condition: service_healthy
 
   stock-db:
     image: redis:7.2-bookworm
@@ -58,8 +67,10 @@ services:
     env_file:
       - env/payment_redis.env
     depends_on:
-      - payment-db
-      - so-rabbit
+      payment-db:
+        condition: service_started
+      so-rabbit:
+        condition: service_healthy
 
   payment-db:
     image: redis:7.2-bookworm
