@@ -20,7 +20,7 @@ broker = AMQPClient(Logger)
 
 
 async def start_orch():
-    event = {'event': 'OrderCreated', 'details': 'Order process started', 'key': str(uuid.uuid4())}
+    event = {'event': 'order_created', 'details': 'Order process started', 'key': str(uuid.uuid4())}
     broker.publish_event('order_created', event)  # publish rabbitMQ event
     return 'orchestration started'
 
@@ -30,7 +30,7 @@ async def stock_subtract(result, items: OrderValue):
         data = {}
         for item in items.items:
             data[item[0]] = item[1]
-        event = {'event': 'StockSubtracted', 'details': 'Stock subtracted for the order', 'data': data,'key': str(uuid.uuid4())}
+        event = {'event': 'stock_subtract', 'details': 'Stock subtracted for the order', 'data': data,'key': str(uuid.uuid4())}
         broker.publish_event(STOCK_SUBTRACT, event)  # publish rabbitMQ event
         return "SUC"
     except Exception as ex:
@@ -43,7 +43,7 @@ async def stock_add(result, items: OrderValue):
         data = {}
         for item in items.items:
             data[item[0]] = item[1]
-        event = {'event': 'StockAdd', 'details': 'Stock added for the order', 'data': data,'key': str(uuid.uuid4())}
+        event = {'event': 'stock_add', 'details': 'Stock added for the order', 'data': data,'key': str(uuid.uuid4())}
         broker.publish_event(STOCK_ADD, event)  # publish rabbitMQ event
         return "SUC"
     except Exception as ex:
