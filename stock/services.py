@@ -124,7 +124,7 @@ async def add_amount_bulk(message: dict):
                        price=item_ids[i].price, 
                        last_upd=await set_updated_str(
                            item_ids[i].last_upd, 
-                           message['message_id'])))
+                           message['key'])))
     try:
         db.mset(stocks_upd)
     except redis.exceptions.RedisError:
@@ -147,7 +147,7 @@ async def remove_amount_bulk(message: dict):
                        price=item_ids[i].price, 
                        last_upd=await set_updated_str(
                            item_ids[i].last_upd, 
-                           message['message_id'])))
+                           message['key'])))
     try:
         db.mset(stocks_upd)
     except redis.exceptions.RedisError:

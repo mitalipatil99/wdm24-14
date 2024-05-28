@@ -92,7 +92,7 @@ async def payment_event_processor(message: IncomingMessage):
         response_obj: AMQPMessage = None
         if client == 'ORDER_REQUEST_ORCHESTRATOR' and command == 'PAYMENT_DEDUCT':
             try:
-                await remove_credit_db(payment_message['data'].get('user_id'), payment_message['data'].get('total_cost'), payment_message.get('message_id'))
+                await remove_credit_db(payment_message['data'].get('user_id'), payment_message['data'].get('total_cost'), payment_message.get('key'))
                 funds_available = True
             except InsufficientCreditError:
                 funds_available = False
@@ -109,7 +109,7 @@ async def payment_event_processor(message: IncomingMessage):
 
         if client == 'ORDER_REQUEST_ORCHESTRATOR' and command == 'PAYMENT_ADD':
             try:
-                await add_credit_db(payment_message['data'].get('user_id'), payment_message['data'].get('total_cost'), payment_message.get('message_id'))
+                await add_credit_db(payment_message['data'].get('user_id'), payment_message['data'].get('total_cost'), payment_message.get('key'))
                 refund_success = True
             except RedisDBError:
                 refund_success = False
