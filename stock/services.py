@@ -33,7 +33,7 @@ atexit.register(close_db_connection)
 
 
 async def set_updated_str(last_upd_str: str, new_upd: str):
-    if last_upd_str.split(',') < 20:
+    if len(last_upd_str.split(',')) < 20:
         return f"{last_upd_str},{new_upd}"
     else:
         last_upd_str = ','.join(last_upd_str.split(',')[1:])
