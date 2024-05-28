@@ -14,8 +14,6 @@ class Singleton(type):
     
 class AMQPClient(metaclass = Singleton):
 
-
-
     def declare_queues(self):
         
         exchange =  self.channel.exchange_declare("ORCHESTRATION_SAGA", "direct")
