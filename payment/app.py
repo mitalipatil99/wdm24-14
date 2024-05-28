@@ -19,6 +19,7 @@ app = Flask("payment-service")
 
 class UserValue(Struct):
     credit: int
+    last_upd: str
 
 DB_ERROR_STR = "DB error"
 
@@ -34,10 +35,8 @@ async def get_user_from_db(user_id: str) -> UserValue | None:
 
 @app.post('/create_user')
 async def create_user():
-    key = str(uuid.uuid4())
-    value = msgpack.encode(UserValue(credit=0))
     try:
-        await create_user_db(key, value)
+        key = await create_user_db()
     except RedisDBError:
         return abort(400, DB_ERROR_STR)
     return jsonify({'user_id': key})
@@ -45,12 +44,8 @@ async def create_user():
 
 @app.post('/batch_init/<n>/<starting_money>')
 async def batch_init_users(n: int, starting_money: int):
-    n = int(n)
-    starting_money = int(starting_money)
-    kv_pairs: dict[str, bytes] = {f"{i}": msgpack.encode(UserValue(credit=starting_money))
-                                  for i in range(n)}
     try:
-        await batch_init_db(kv_pairs)
+        await batch_init_db(n, starting_money)
     except RedisDBError:
         return abort(400, DB_ERROR_STR)
     return jsonify({"msg": "Batch init for users successful"})

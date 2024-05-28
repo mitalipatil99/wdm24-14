@@ -20,7 +20,7 @@ async def start_orch():
     broker.publish_event('order_created', event) #publish rabbitMQ event
     return 'orchestration started'
 
-
+# TODO: Add message id to event in all these
 async def stock_subtract(result, items: OrderValue):
     try:
         print('Inside stock_subtract()...')

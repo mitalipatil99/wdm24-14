@@ -17,6 +17,7 @@ app = Flask("stock-service")
 class StockValue(Struct):
     stock: int
     price: int
+    last_upd: str
 
 async def get_item_from_db(item_id: str) -> StockValue | None:
     # get serialized data
@@ -48,13 +49,8 @@ async def create_item(price: int):
 
 @app.post('/batch_init/<n>/<starting_stock>/<item_price>')
 async def batch_init_users(n: int, starting_stock: int, item_price: int):
-    n = int(n)
-    starting_stock = int(starting_stock)
-    item_price = int(item_price)
-    kv_pairs: dict[str, bytes] = {f"{i}": msgpack.encode(StockValue(stock=starting_stock, price=item_price))
-                                  for i in range(n)}
     try:
-        await set_users(kv_pairs)
+        await set_users(n, starting_stock, item_price)
     except RedisDBError:
         return abort(400, DB_ERROR_STR)
     return jsonify({"msg": "Batch init for stock successful"})
