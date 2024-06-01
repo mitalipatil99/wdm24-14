@@ -23,8 +23,9 @@ services:
       - "8000:80"
     depends_on:
       - order-service
-      - stock-service
+      - stock-gateway
       - payment-service
+
 
   order-service:
     build: ./order
@@ -43,6 +44,17 @@ services:
   order-db:
     image: redis:7.2-bookworm
     command: redis-server --requirepass redis --maxmemory 512mb
+
+
+  stock-gateway:
+    build: ./stock_gateway
+    image: stock-gateway:latest
+    command: gunicorn -b 0.0.0.0:5000 -w 2 --timeout 30 --log-level=info app:app
+    env_file:
+      - env/stock_gateway.env
+    depends_on:
+      so-rabbit:
+        condition: service_healthy
 
   stock-service:
     build: ./stock
