@@ -1,5 +1,7 @@
 import logging
 import uuid
+from random import random
+
 import pika
 import os
 from threading import Thread
@@ -10,6 +12,11 @@ DB_ERROR_STR = "DB error"
 
 app = Flask("order-gateway")
 
+class OrderValue(Struct):
+    paid: bool
+    items: list[tuple[str, int]]
+    user_id: str
+    total_cost: int
 
 class RabbitMQClient:
     def __init__(self):
@@ -93,7 +100,26 @@ def create_order(user_id: str):
 @app.post('/batch_init/<n>/<n_items>/<n_users>/<item_price>')
 @threaded
 def batch_init_users(n: int, n_items: int, n_users: int, item_price: int):
-    response = rabbitmq_client.call({'action': 'batch_init_users','n':n,'n_items':n_items,'n_users':n_users,'item_price':item_price})
+
+    n = int(n)
+    n_items = int(n_items)
+    n_users = int(n_users)
+    item_price = int(item_price)
+
+    def generate_entry() -> OrderValue:
+        user_id = random.randint(0, n_users - 1)
+        item1_id = random.randint(0, n_items - 1)
+        item2_id = random.randint(0, n_items - 1)
+        value = OrderValue(paid=False,
+                           items=[(f"{item1_id}", 1), (f"{item2_id}", 1)],
+                           user_id=f"{user_id}",
+                           total_cost=2*item_price)
+        return value
+
+    kv_pairs: dict[str, bytes] = {f"{i}": msgpack.encode(generate_entry())
+                                  for i in range(n)}
+
+    response = rabbitmq_client.call({'action': 'batch_init_users','kv_pairs':kv_pairs})
     return response
 
 
@@ -107,8 +133,16 @@ def find_order(order_id: str):
 @app.post('/addItem/<order_id>/<item_id>/<quantity>')
 @threaded
 def add_item(order_id: str, item_id: str, quantity: int):
-    response = rabbitmq_client.call({'action': 'add_item','order_id':order_id,'item_id':item_id,'quantity':quantity})
-    return response
+    # order_entry: OrderValue = rabbitmq_client.call({'action': 'find_order','order_id':order_id})
+    # item_reply =  send_get_request(f"{GATEWAY_URL}/stock/find/{item_id}")
+    # if item_reply.status_code != 200:
+    #     # Request failed because item does not exist
+    #     abort(400, f"Item: {item_id} does not exist!")
+    # item_json: dict = item_reply.json()
+    # order_entry.items.append((item_id, int(quantity)))
+    # order_entry.total_cost += int(quantity) * item_json["price"]
+    # response = rabbitmq_client.call({'action': 'add_item','order_id':order_id,'item_id':item_id,'quantity':quantity})
+    # return response
 
 @app.post('/checkout/<order_id>')
 @threaded
