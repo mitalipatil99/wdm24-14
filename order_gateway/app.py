@@ -23,8 +23,11 @@ class RabbitMQClient:
         self.connection = pika.BlockingConnection(pika.URLParameters(os.environ['RABBITMQ_BROKER_URL']))
         self.channel = self.connection.channel()
         self.channel.queue_declare(queue='order_queue')
+        self.channel.queue_declare(queue='stock_queue')
+        self.channel.queue_declare(queue='payment_queue')
 
-    def call(self, message):
+
+    def call(self, message, queue):
         corr_id = str(uuid.uuid4())
         response_queue = self.channel.queue_declare(queue='', exclusive=True).method.queue
 
@@ -38,7 +41,7 @@ class RabbitMQClient:
         self.response = None
         self.channel.basic_publish(
             exchange='',
-            routing_key='order_queue',
+            routing_key=queue,
             properties=pika.BasicProperties(
                 reply_to=response_queue,
                 correlation_id=corr_id,
@@ -83,6 +86,8 @@ def threaded(fn):
         # handle status code
         ret = thread.join()
         app.logger.debug(f"woahh {ret}")
+        if ret['status'] == 200:
+            return Response(ret['msg'], ret['status'])
         return jsonify(ret)
 
     wrapper.__name__ = f"{fn.__name__}_wrapper"
@@ -92,7 +97,7 @@ def threaded(fn):
 @app.post('/create/<user_id>')
 @threaded
 def create_order(user_id: str):
-    response = rabbitmq_client.call({'action': 'create_order','user_id':user_id})
+    response = rabbitmq_client.call({'action': 'create_order','user_id':user_id}, 'order_queue')
     return response
 
 
@@ -119,37 +124,52 @@ def batch_init_users(n: int, n_items: int, n_users: int, item_price: int):
     kv_pairs: dict[str, bytes] = {f"{i}": msgpack.encode(generate_entry())
                                   for i in range(n)}
 
-    response = rabbitmq_client.call({'action': 'batch_init_users','kv_pairs':kv_pairs})
+    response = rabbitmq_client.call({'action': 'batch_init_users','kv_pairs':kv_pairs}, 'order_queue')
     return response
 
 
 @app.get('/find/<order_id>')
 @threaded
 def find_order(order_id: str):
-    response = rabbitmq_client.call({'action': 'find_order','order_id':order_id})
+    response = rabbitmq_client.call({'action': 'find_order','order_id':order_id}, 'order_queue')
     return response
 
 
 @app.post('/addItem/<order_id>/<item_id>/<quantity>')
 @threaded
 def add_item(order_id: str, item_id: str, quantity: int):
-    # order_entry: OrderValue = rabbitmq_client.call({'action': 'find_order','order_id':order_id})
-    # item_reply =  send_get_request(f"{GATEWAY_URL}/stock/find/{item_id}")
-    # if item_reply.status_code != 200:
-    #     # Request failed because item does not exist
-    #     abort(400, f"Item: {item_id} does not exist!")
-    # item_json: dict = item_reply.json()
-    # order_entry.items.append((item_id, int(quantity)))
-    # order_entry.total_cost += int(quantity) * item_json["price"]
-    # response = rabbitmq_client.call({'action': 'add_item','order_id':order_id,'item_id':item_id,'quantity':quantity})
-    # return response
+    
+    order_details = rabbitmq_client.call({'action': 'find_order','order_id':order_id}, 'order_queue')
+    item_details = rabbitmq_client.call({'action':'find_item', 'item_id': item_id}, 'stock_queue')
+    # check status
+    order_details['items'].append((item_id, int(quantity)))
+    order_details['total_cost'] += int(quantity) * item_details['price']
+
+    response = rabbitmq_client.call({'action': 'add_item','order_id':order_id,'order_entry': order_details}, 'order_queue')
+    return response
 
 @app.post('/checkout/<order_id>')
 @threaded
 def checkout(order_id: str):
     app.logger.debug(f"Checking out {order_id}")
+    order_details = rabbitmq_client.call({'action': 'find_order','order_id':order_id}, 'order_queue')
+    item_data = {}
+    for item in order_details['items']:
+        item_data[item[0]] = item[1]
+    stock_sub_response = rabbitmq_client.call({'action': 'remove_stock_bulk','data':item_data, 'order_id': order_id}, 'stock_queue')
+    # if stock_sub_response['status'] != 200:
+    #     stock_add_response = rabbitmq_client.call({'action':'add_stock_bulk', 'data':item}, 'stock_queue')
+    #     return {}
+
+    payment = rabbitmq_client.call({'action': 'remove_credit','user_id':order_details['user_id'], 'amount': order_details['total_cost']}, 'payment_queue')
+    # print(order_details_response)
+    app.logger.info(payment)
+    
+
+
     app.logger.debug("Checkout successful")
-    return Response("Checkout successful", status=200)
+    return {"msg": "checkout successful", "status":200}
+    # return Response("Checkout successful", status=200)
 
 
 if __name__ == '__main__':

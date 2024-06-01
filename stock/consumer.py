@@ -1,5 +1,5 @@
 import pika
-from services import set_new_item, set_users, get_item, add_amount, remove_amount
+from services import set_new_item, set_users, get_item, add_amount, remove_amount, remove_amount_bulk, add_amount_bulk
 from msgspec import msgpack
 import os
 from exceptions import RedisDBError
@@ -61,10 +61,26 @@ class RabbitMQConsumer:
                 }
                 self.publish_message(properties, response)
 
+            elif msg['action'] == "remove_stock_bulk":
+                remove_amount_bulk(msg['data'], msg['order_id'])
+                response = {
+                    "item_id": msg['order_id'],
+                    # "stock": new_stock
+                }
+                self.publish_message(properties, response)
+
+            elif msg['action'] == "add_stock_bulk":
+                add_amount_bulk(msg['data'])
+                response = {
+                    "item_id": msg['item_id'],
+                    # "stock": new_stock
+                }
+                self.publish_message(properties, response)
+
 
 
         except RedisDBError:
-            print("woaaaaaaaaaaaaaaaaaaaaaaaaaah")
+            self.publish_message(properties, {"status": 400, "message":"woah"} )
 
 
     def start_consuming(self):

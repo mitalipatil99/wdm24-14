@@ -121,22 +121,29 @@ def add_amount_bulk(message: dict):
         raise RedisDBError
 
 
-def remove_amount_bulk(message: dict):
-    item_ids = list(message['data'].keys())
+def remove_amount_bulk(stock_remove: dict, order_id: str):
+    item_ids = list(stock_remove.keys())
     items = get_item_bulk(item_ids)
     stocks_upd = dict()
     for i in range(len(items)):
         item : StockValue | None = msgpack.decode(items[i], type=StockValue) if items[i] else None
-        item.stock -= int(message['data'][item_ids[i]])
+        # If item has already been updated by same order id, so not retry: Check if this is fine, same order can be checked out multiple times
+
+        # if order_id in item.last_upd and item.last_op == "sub":
+        #     raise DuplicateUpdateError
+        item.stock -= int(stock_remove[item_ids[i]])
         if item.stock < 0:
+            # TODO: Error here
+            # stock_insuf = {""}
+            # AMQPClient.publish_event()
             raise InsufficientStockError
-        items[i] = item
         stocks_upd[item_ids[i]] = msgpack.encode(
-            StockValue(stock=item_ids[i].stock, 
-                       price=item_ids[i].price, 
+            StockValue(stock=item.stock, 
+                       price=item.price, 
                        last_upd=set_updated_str(
-                           item_ids[i].last_upd, 
-                           message['key'])))
+                           item.last_upd, 
+                           order_id),
+                           ))
     try:
         db.mset(stocks_upd)
     except redis.exceptions.RedisError:

@@ -39,21 +39,22 @@ class RabbitMQConsumer:
 
             elif msg['action'] == "create_order":
                 key = create_order_db(msg['user_id'])
-                self.publish_message(properties, {"user_id": key})
+                self.publish_message(properties, {"order_id": key})
 
             elif msg['action'] == "batch_init_users":
                 batch_init_users_db(msg['kv_pairs'])
                 self.publish_message(properties, {"msg": "Batch init for orders successful"})
 
             elif msg['action'] == "add_item":
-                # order_entry = add_item_db(msg['order_id'], msg['amount'])
-                # response = {
-                #     "item_id": msg['item_id'],
-                #     "stock": new_stock
-                # }
+                add_item_db(msg['order_id'], msg['order_entry'])
+                response = {
+                    "order_id": msg['order_id'],
+                    "status": 200
+                }
                 self.publish_message(properties, response)
 
             elif msg['action'] == "order_checkout":
+                pass
                 # new_stock = remove_amount(msg['item_id'], msg['amount'])
                 # response = {
                 #     "item_id": msg['item_id'],
