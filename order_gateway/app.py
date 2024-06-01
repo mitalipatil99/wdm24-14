@@ -83,6 +83,7 @@ def threaded(fn):
 
 
 @app.post('/create/<user_id>')
+@threaded
 def create_order(user_id: str):
     response = rabbitmq_client.call({'action': 'create_order','user_id':user_id})
     return response
@@ -90,21 +91,27 @@ def create_order(user_id: str):
 
 
 @app.post('/batch_init/<n>/<n_items>/<n_users>/<item_price>')
+@threaded
 def batch_init_users(n: int, n_items: int, n_users: int, item_price: int):
-    pass
+    response = rabbitmq_client.call({'action': 'batch_init_users','n':n,'n_items':n_items,'n_users':n_users,'item_price':item_price})
+    return response
 
 
 @app.get('/find/<order_id>')
+@threaded
 def find_order(order_id: str):
-    pass
+    response = rabbitmq_client.call({'action': 'find_order','order_id':order_id})
+    return response
 
 
 @app.post('/addItem/<order_id>/<item_id>/<quantity>')
+@threaded
 def add_item(order_id: str, item_id: str, quantity: int):
-    pass
-
+    response = rabbitmq_client.call({'action': 'add_item','order_id':order_id,'item_id':item_id,'quantity':quantity})
+    return response
 
 @app.post('/checkout/<order_id>')
+@threaded
 def checkout(order_id: str):
     app.logger.debug(f"Checking out {order_id}")
     app.logger.debug("Checkout successful")
