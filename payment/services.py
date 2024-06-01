@@ -8,7 +8,6 @@ from aio_pika import IncomingMessage
 from msgspec import msgpack, Struct
 
 from model import AMQPMessage
-from amqp_client import AMQPClient
 from exceptions import RedisDBError, InsufficientCreditError
 
 db: redis.Redis = redis.Redis(host=os.environ['REDIS_HOST'],

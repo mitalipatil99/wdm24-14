@@ -1,8 +1,8 @@
 import pika
 from msgspec import msgpack
 
-from payment.exceptions import RedisDBError
-from payment.services import create_user_db, batch_init_db, get_user_db, add_credit_db, remove_credit_db
+from exceptions import RedisDBError
+from services import create_user_db, batch_init_db, get_user_db, add_credit_db, remove_credit_db
 
 
 class RabbitMQConsumer:
@@ -25,6 +25,7 @@ class RabbitMQConsumer:
 
     def callback(self, ch, method, properties, body):
         msg = msgpack.decode(body)
+        print(msg)
         ch.basic_ack(delivery_tag=method.delivery_tag)  # Acknowledge the message
         try:
             if msg['action'] == "create_user":
@@ -32,6 +33,7 @@ class RabbitMQConsumer:
                 self.publish_message(properties, {"user_id": key})
 
             elif msg['action'] == "batch_init":
+                print("hehe")
                 batch_init_db(msg['n'], msg['starting_money'])
                 self.publish_message(properties, {"msg": "Batch init for payment successful"})
 
