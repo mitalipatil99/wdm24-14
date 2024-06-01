@@ -1,12 +1,11 @@
 import logging
-import os
-import atexit
+import threading
 import uuid
-
-import redis
+import pika
 
 from msgspec import msgpack, Struct
 from flask import Flask, jsonify, abort, Response
+
 from services import get_item, set_new_item, set_users, add_amount, remove_amount
 from exceptions import RedisDBError, ItemNotFoundError, InsufficientStockError
 
@@ -14,90 +13,132 @@ DB_ERROR_STR = "DB error"
 
 app = Flask("stock-service")
 
+
 class StockValue(Struct):
     stock: int
     price: int
     last_upd: str
 
-async def get_item_from_db(item_id: str) -> StockValue | None:
-    # get serialized data
-    try:
-        entry: bytes = await get_item(item_id)
-    except RedisDBError:
-        raise RedisDBError
-    except ItemNotFoundError:
-        raise ItemNotFoundError
-    # deserialize data if it exists else return null
-    # entry: StockValue | None = msgpack.decode(entry, type=StockValue) if entry else None
-    # if entry is None:
-        # if item does not exist in the database; abort
-        # abort(400, f"Item: {item_id} not found!")
-    return entry
+
+class RabbitMQClient:
+    def __init__(self):
+        self.connection = pika.BlockingConnection(pika.ConnectionParameters('localhost'))
+        self.channel = self.connection.channel()
+        self.channel.queue_declare(queue='stock_queue')
+
+    def call(self, message):
+        corr_id = str(uuid.uuid4())
+        response_queue = self.channel.queue_declare(queue='', exclusive=True).method.queue
+
+        def on_response(ch, method, props, body):
+            if corr_id == props.correlation_id:
+                ch.basic_ack(delivery_tag=method.delivery_tag)
+                self.response = msgpack.decode(body)
+                ch.stop_consuming()
+
+        self.channel.basic_consume(queue=response_queue, on_message_callback=on_response, auto_ack=False)
+        self.response = None
+        self.channel.basic_publish(
+            exchange='',
+            routing_key='stock_queue',
+            properties=pika.BasicProperties(
+                reply_to=response_queue,
+                correlation_id=corr_id,
+            ),
+            body=msgpack.encode(message)
+        )
+
+        while self.response is None:
+            self.connection.process_data_events(time_limit=None)
+
+        return self.response
+
+
+rabbitmq_client = RabbitMQClient()
+
+
+def threaded(fn):
+    def wrapper(*args, **kwargs):
+        def callback():
+            return fn(*args, **kwargs)
+
+        thread = threading.Thread(target=callback)
+        thread.start()
+        thread.join()
+
+    return wrapper
 
 
 @app.post('/item/create/<price>')
-async def create_item(price: int):
-    # key = str(uuid.uuid4())
-    # app.logger.debug(f"Item: {key} created")
-    # value = msgpack.encode(StockValue(stock=0, price=int(price)))
+@threaded
+def create_item(price: int):
     try:
-        key = await set_new_item(price)
+        key = set_new_item(price)
     except RedisDBError:
         return abort(400, DB_ERROR_STR)
-    return key
+
+    response = rabbitmq_client.call({'action': 'create_item', 'item_id': key, 'price': price})
+    return jsonify(response)
 
 
 @app.post('/batch_init/<n>/<starting_stock>/<item_price>')
-async def batch_init_users(n: int, starting_stock: int, item_price: int):
+@threaded
+def batch_init_users(n: int, starting_stock: int, item_price: int):
     try:
-        await set_users(n, starting_stock, item_price)
+        set_users(n, starting_stock, item_price)
     except RedisDBError:
         return abort(400, DB_ERROR_STR)
-    return jsonify({"msg": "Batch init for stock successful"})
+
+    response = rabbitmq_client.call(
+        {'action': 'batch_init', 'n': n, 'starting_stock': starting_stock, 'item_price': item_price})
+    return jsonify(response)
 
 
 @app.get('/find/<item_id>')
-async def find_item(item_id: str):
+@threaded
+def find_item(item_id: str):
     try:
-        item_entry: StockValue = await get_item(item_id)
+        item_entry: StockValue = get_item(item_id)
     except RedisDBError:
         return abort(400, DB_ERROR_STR)
     except ItemNotFoundError:
         return abort(400, f"Item not found!")
-    return jsonify(
-        {
-            "stock": item_entry.stock,
-            "price": item_entry.price
-        }
-    )
+
+    response = rabbitmq_client.call({'action': 'find_item', 'item_id': item_id})
+    return jsonify(response)
 
 
 @app.post('/add/<item_id>/<amount>')
-async def add_stock(item_id: str, amount: int):
+@threaded
+def add_stock(item_id: str, amount: int):
     try:
-        item_entry: StockValue = await get_item(item_id)
-        # update stock, serialize and update database
+        item_entry: StockValue = get_item(item_id)
         item_entry.stock += int(amount)
-        await add_amount(item_id, amount)
+        add_amount(item_id, amount)
     except RedisDBError:
         return abort(400, DB_ERROR_STR)
     except ItemNotFoundError:
         return abort(400, f"Item not found!")
-    return Response(f"Item: {item_id} stock updated to: {item_entry.stock}", status=200)
+
+    response = rabbitmq_client.call({'action': 'add_stock', 'item_id': item_id, 'amount': amount})
+    return jsonify(response)
 
 
 @app.post('/subtract/<item_id>/<amount>')
-async def remove_stock(item_id: str, amount: int):
+@threaded
+def remove_stock(item_id: str, amount: int):
     try:
-        item_entry: StockValue = await get_item(item_id)
-        await remove_amount(item_id, amount)
+        item_entry: StockValue = get_item(item_id)
+        remove_amount(item_id, amount)
     except RedisDBError:
         return abort(400, DB_ERROR_STR)
     except InsufficientStockError:
         return abort(400, f"Insufficient funds!")
     except ItemNotFoundError:
         return abort(400, f"Item not found!")
-    return Response(f"Item: {item_id} stock updated to: {item_entry.stock}", status=200)
+
+    response = rabbitmq_client.call({'action': 'remove_stock', 'item_id': item_id, 'amount': amount})
+    return jsonify(response)
 
 
 if __name__ == '__main__':

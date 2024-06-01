@@ -55,7 +55,6 @@ def threaded(fn):
             return fn(*args, **kwargs)
         thread = threading.Thread(target=callback)
         thread.start()
-        return jsonify({"msg": "Processing in background"}), 202
     return wrapper
 
 @app.post('/item/create/<price>')
@@ -83,7 +82,7 @@ def batch_init_users(n: int, starting_stock: int, item_price: int):
 @app.get('/find/<item_id>')
 @threaded
 def find_item(item_id: str):
-    try:
+    try:898
         item_entry: StockValue = get_item(item_id)
     except RedisDBError:
         return abort(400, DB_ERROR_STR)
