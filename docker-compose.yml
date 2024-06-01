@@ -1,19 +1,19 @@
 version: "3"
 services:
-  so-rabbit:
-    image: 'rabbitmq:3.13.2-management'
-    ports:
-      - '5672:5672'
-      - '15672:15672'
-    environment:
-      AMQP_URL: 'amqp://rabbitmq?connection_attempts=5&retry_delay=5'
-      RABBITMQ_DEFAULT_USER: "guest"
-      RABBITMQ_DEFAULT_PASS: "guest"
-    healthcheck:
-      test: rabbitmq-diagnostics check_port_connectivity
-      interval: 2s
-      timeout: 2s
-      retries: 30
+  # so-rabbit:
+  #   image: 'rabbitmq:3.13.2-management'
+  #   ports:
+  #     - '5672:5672'
+  #     - '15672:15672'
+  #   environment:
+  #     AMQP_URL: 'amqp://rabbitmq?connection_attempts=5&retry_delay=5'
+  #     RABBITMQ_DEFAULT_USER: "guest"
+  #     RABBITMQ_DEFAULT_PASS: "guest"
+  #   healthcheck:
+  #     test: rabbitmq-diagnostics check_port_connectivity
+  #     interval: 2s
+  #     timeout: 2s
+  #     retries: 30
   
   gateway:
     image: nginx:1.25-bookworm
@@ -25,20 +25,21 @@ services:
       - order-service
       - stock-service
       - payment-service
+      # - rollback-service
 
   order-service:
     build: ./order
     image: order:latest
     environment:
       - GATEWAY_URL=http://gateway:80
-    command: gunicorn -b 0.0.0.0:5000 -w 2 --timeout 30 --log-level=info app:app
+    command: gunicorn -b 0.0.0.0:5000 -w 2 -k gevent --timeout 30 --log-level=info app:app
     env_file:
       - env/order_redis.env
     depends_on:
       order-db:
         condition: service_started
-      so-rabbit:
-        condition: service_healthy
+      # so-rabbit:
+      #   condition: service_healthy
 
   order-db:
     image: redis:7.2-bookworm
@@ -47,14 +48,14 @@ services:
   stock-service:
     build: ./stock
     image: stock:latest
-    command: sh -c "python consumer.py & gunicorn -b 0.0.0.0:5000 -w 2 --timeout 30 --log-level=info app:app"
+    command: gunicorn -b 0.0.0.0:5000 -w 2 -k gevent --timeout 30 --log-level=info app:app
     env_file:
       - env/stock_redis.env
     depends_on:
       stock-db:
         condition: service_started
-      so-rabbit:
-        condition: service_healthy
+      # so-rabbit:
+      #   condition: service_healthy
 
   stock-db:
     image: redis:7.2-bookworm
@@ -63,15 +64,31 @@ services:
   payment-service:
     build: ./payment
     image: user:latest
-    command: sh -c "python consumer.py & gunicorn -b 0.0.0.0:5000 -w 2 --timeout 30 --log-level=info app:app"
+    command: gunicorn -b 0.0.0.0:5000 -w 2 -k gevent --timeout 30 --log-level=info app:app
     env_file:
       - env/payment_redis.env
     depends_on:
       payment-db:
         condition: service_started
-      so-rabbit:
-        condition: service_healthy
+      # so-rabbit:
+      #   condition: service_healthy
 
   payment-db:
     image: redis:7.2-bookworm
     command: redis-server --requirepass redis --maxmemory 512mb
+
+  # rollback-service:
+  #   build: ./rollback
+  #   image: user:latest
+  #   command: python consumer.py
+  #   env_file:
+  #     - env/rollback_redis.env
+  #   depends_on:
+  #     payment-db:
+  #       condition: service_started
+  #     order-db:
+  #       condition: service_started
+  #     stock-db:
+  #       condition: service_started
+  #     so-rabbit:
+  #       condition: service_healthy

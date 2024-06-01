@@ -1,7 +1,8 @@
-from typing import Any
-from pydantic import BaseModel
+from msgspec import Struct
+from typing import Optional
 
-class AMQPMessage(BaseModel):
-    id: str
-    content: Any | None = None
-    reply_state: str | None = None
+class StockValue(Struct):
+    stock: int
+    price: int
+    last_upd: Optional[str] = "api"
+    last_op: Optional[str] = "add"

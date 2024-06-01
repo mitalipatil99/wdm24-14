@@ -6,3 +6,6 @@ class InsufficientStockError(Exception):
 
 class ItemNotFoundError(Exception):
 	pass
+
+class DuplicateUpdateError(Exception):
+	pass

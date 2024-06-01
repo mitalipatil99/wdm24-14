@@ -1,17 +1,16 @@
 import atexit
 import os
 from typing import List
-from uuid import uuid4
 import uuid
+import random
 
 import redis
-from aio_pika import IncomingMessage
 from msgspec import msgpack, Struct
 import redis.exceptions
 
-from model import AMQPMessage
+from model import OrderValue
 from amqp_client import AMQPClient
-from exceptions import RedisDBError, InsufficientCreditError
+from exceptions import *
 
 db: redis.Redis = redis.Redis(host=os.environ['REDIS_HOST'],
                               port=int(os.environ['REDIS_PORT']),
@@ -60,14 +59,6 @@ atexit.register(close_db_connection)
 #     session.refresh(order)
 #     return order
 
-
-
-class OrderValue(Struct):
-    paid: bool
-    items: list[tuple[str, int]]
-    user_id: str
-    total_cost: int
-
 async def get_order_by_id_db(order_id: str) :
     try:
         entry: bytes = db.get(order_id)
@@ -86,18 +77,37 @@ async def create_order_db(user_id: str):
         raise RedisDBError(Exception)
     return key
 
-async def batch_init_users_db(kv_pairs):
+
+async def batch_init_users_db(n: int, n_items: int, n_users: int, item_price: int):
     try:
+        n = int(n)
+        n_items = int(n_items)
+        n_users = int(n_users)
+        item_price = int(item_price)
+
+        def generate_entry() -> OrderValue:
+            user_id = random.randint(0, n_users - 1)
+            item1_id = random.randint(0, n_items - 1)
+            item2_id = random.randint(0, n_items - 1)
+            value = OrderValue(paid=False,
+                            items=[(f"{item1_id}", 1), (f"{item2_id}", 1)],
+                            user_id=f"{user_id}",
+                            total_cost=2*item_price)
+            return value
+
+        kv_pairs: dict[str, bytes] = {f"{i}": msgpack.encode(generate_entry())
+                                    for i in range(n)}
         db.mset(kv_pairs)
     except redis.exceptions.RedisError:
         raise RedisDBError(Exception)
-    
+
+
 async def add_item_db(order_id, order_entry):
     try:
         db.set(order_id, msgpack.encode(order_entry))
     except redis.exceptions.RedisError:
         raise RedisDBError(Exception)
-    
+
 
 async def confirm_order(order_id, order_entry):
     try:

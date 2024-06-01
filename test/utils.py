@@ -17,6 +17,9 @@ def find_item(item_id: str) -> dict:
 def add_stock(item_id: str, amount: int) -> int:
     return requests.post(f"{STOCK_URL}/stock/add/{item_id}/{amount}").status_code
 
+def add_stock_new(item_id: str, amount: int) -> int:
+    return requests.post(f"{STOCK_URL}/stock/add/{item_id}/{amount}")
+
 
 def subtract_stock(item_id: str, amount: int) -> int:
     return requests.post(f"{STOCK_URL}/stock/subtract/{item_id}/{amount}").status_code

@@ -7,3 +7,4 @@ pydantic==1.9.0
 simplejson==3.17.6
 requests==2.31.0
 pika
+gevent==24.2.1

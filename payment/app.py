@@ -6,6 +6,7 @@ import atexit
 
 from msgspec import msgpack, Struct
 from flask import Flask, jsonify, abort, Response
+from model import UserValue
 
 from services import (get_user_db, 
                       create_user_db, 
@@ -16,10 +17,6 @@ from services import (get_user_db,
 from exceptions import RedisDBError, InsufficientCreditError
 
 app = Flask("payment-service")
-
-class UserValue(Struct):
-    credit: int
-    last_upd: str
 
 DB_ERROR_STR = "DB error"
 
@@ -81,6 +78,19 @@ async def remove_credit(user_id: str, amount: int):
     except InsufficientCreditError:
         abort(400, f"User: {user_id} credit cannot get reduced below zero!")
     return Response(f"User: {user_id} credit updated to: {user_entry.credit}", status=200)
+
+
+@app.post('/pay_order/<user_id>/<amount>/<order_id>')
+async def remove_credit_order(user_id: str, amount: int, order_id: str):
+    app.logger.debug(f"Removing {amount} credit from user: {user_id} for order: {order_id}")
+    try:
+        user_entry = await remove_credit_db(user_id, amount, order_id)
+    except RedisDBError:
+        return abort(400, DB_ERROR_STR)
+    except InsufficientCreditError:
+        abort(405, f"User: {user_id} credit cannot get reduced below zero!")
+    return Response(f"User: {user_id} credit updated to: {user_entry.credit}", status=200)
+
 
 
 if __name__ == '__main__':
