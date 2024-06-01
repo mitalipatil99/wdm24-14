@@ -26,7 +26,7 @@ class UserValue(Struct):
     last_upd: str
 
 
-async def get_user_db(user_id: str) -> UserValue | None:
+def get_user_db(user_id: str) -> UserValue | None:
     try:
         # get serialized data
         entry: bytes = db.get(user_id)
@@ -36,7 +36,7 @@ async def get_user_db(user_id: str) -> UserValue | None:
     entry: UserValue | None = msgpack.decode(entry, type=UserValue) if entry else None
     return entry
 
-async def create_user_db():
+def create_user_db():
     key = str(uuid.uuid4())
     value = msgpack.encode(UserValue(credit=0, last_upd="admin"))
     try:
@@ -46,7 +46,7 @@ async def create_user_db():
     return key
     
 
-async def batch_init_db(n: int, starting_money: int):
+def batch_init_db(n: int, starting_money: int):
     n = int(n)
     starting_money = int(starting_money)
     kv_pairs: dict[str, bytes] = {f"{i}": msgpack.encode(UserValue(credit=starting_money, last_upd="admin"))
@@ -57,8 +57,8 @@ async def batch_init_db(n: int, starting_money: int):
         raise RedisDBError(Exception)
 
 
-async def add_credit_db(user_id: str, amount: int, user_upd: str = "api") -> UserValue:
-    user_entry: UserValue = await get_user_db(user_id)
+def add_credit_db(user_id: str, amount: int, user_upd: str = "api") -> UserValue:
+    user_entry: UserValue =  get_user_db(user_id)
     # update credit, serialize and update database
     user_entry.credit += int(amount)
     user_entry.last_upd = user_upd
@@ -69,8 +69,8 @@ async def add_credit_db(user_id: str, amount: int, user_upd: str = "api") -> Use
     return user_entry
 
 
-async def remove_credit_db(user_id: str, amount: int, user_upd: str = "api"):
-    user_entry: UserValue = await get_user_db(user_id)
+def remove_credit_db(user_id: str, amount: int, user_upd: str = "api"):
+    user_entry: UserValue = get_user_db(user_id)
     # update credit, serialize and update database
     user_entry.credit -= int(amount)
     if user_entry.credit < 0:
@@ -83,8 +83,8 @@ async def remove_credit_db(user_id: str, amount: int, user_upd: str = "api"):
     return user_entry
 
 
-async def payment_event_processor(message: IncomingMessage):
-    async with message.process(ignore_processed=True):
+def payment_event_processor(message: IncomingMessage):
+     with message.process():
         command = message.headers.get('COMMAND')
         client = message.headers.get('CLIENT')
 
@@ -92,7 +92,7 @@ async def payment_event_processor(message: IncomingMessage):
         response_obj: AMQPMessage = None
         if client == 'ORDER_REQUEST_ORCHESTRATOR' and command == 'PAYMENT_DEDUCT':
             try:
-                await remove_credit_db(payment_message['data'].get('user_id'), payment_message['data'].get('total_cost'), payment_message.get('key'))
+                remove_credit_db(payment_message['data'].get('user_id'), payment_message['data'].get('total_cost'), payment_message.get('key'))
                 funds_available = True
             except InsufficientCreditError:
                 funds_available = False
@@ -100,7 +100,7 @@ async def payment_event_processor(message: IncomingMessage):
                 #TODO: To be replaced by timeout? Or check types of error and then 
                 funds_available = False
 
-            await message.ack()
+            message.ack()
             response_obj = AMQPMessage(
                 id=message.correlation_id,
                 content=None,
@@ -109,12 +109,12 @@ async def payment_event_processor(message: IncomingMessage):
 
         if client == 'ORDER_REQUEST_ORCHESTRATOR' and command == 'PAYMENT_ADD':
             try:
-                await add_credit_db(payment_message['data'].get('user_id'), payment_message['data'].get('total_cost'), payment_message.get('key'))
+                add_credit_db(payment_message['data'].get('user_id'), payment_message['data'].get('total_cost'), payment_message.get('key'))
                 refund_success = True
             except RedisDBError:
                 refund_success = False
             
-            await message.ack()
+            message.ack()
             response_obj = AMQPMessage(
                 id=message.correlation_id,
                 content=None,
@@ -125,11 +125,11 @@ async def payment_event_processor(message: IncomingMessage):
         # the outcome of the request.
         assert response_obj is not None
 
-        amqp_client: AMQPClient = await AMQPClient().init()
-        await amqp_client.event_producer(
+        amqp_client: AMQPClient = AMQPClient().init()
+        amqp_client.event_producer(
             'ORDER_TX_EVENT_STORE',
             message.reply_to,
             message.correlation_id,
             response_obj
         )
-        await amqp_client.connection.close()
+        amqp_client.connection.close()
