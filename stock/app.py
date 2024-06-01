@@ -83,9 +83,11 @@ def threaded(fn):
         
         thread = ThreadWithReturnValue(target=callback)
         thread.start()
+        # handle status code
         ret = thread.join()
         print(f"woahh {ret}")
-        return ret
+        app.logger.error(f"woahh {ret}")
+        return jsonify(ret)
 
     wrapper.__name__ = f"{fn.__name__}_wrapper"
     return wrapper
@@ -99,8 +101,8 @@ def create_item(price: int):
     except RedisDBError:
         return abort(400, DB_ERROR_STR)
 
-    # response = rabbitmq_client.call({'action': 'create_item', 'item_id': key, 'price': price})
-    return key
+    response = rabbitmq_client.call({'action': 'create_item', 'item_id': key, 'price': price})
+    return {"item_id": key}
 
 
 @app.post('/batch_init/<n>/<starting_stock>/<item_price>')

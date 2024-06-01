@@ -61,14 +61,14 @@ async def get_item_bulk(item_ids: list) -> list:
     return entries
 
 
-async def set_new_item(value: int):
+def set_new_item(value: int):
     key = str(uuid.uuid4())
     value = msgpack.encode(StockValue(stock=0, price=int(value), last_upd='admin'))
     try:
         db.set(key, value)
     except redis.exceptions.RedisError:
         raise RedisDBError
-    return jsonify({'item_id': key})
+    return key
 
 # Check functionality: We are setting same price and stock amount for each item??
 async def set_users(n: int, starting_stock: int, item_price: int, item_upd: str = 'admin'):
