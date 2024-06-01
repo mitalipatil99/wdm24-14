@@ -1,5 +1,5 @@
 import pika
-from services import set_new_item, set_users, get_item
+from services import set_new_item, set_users, get_item, add_amount, remove_amount
 from msgspec import msgpack
 import os
 from exceptions import RedisDBError
@@ -44,6 +44,23 @@ class RabbitMQConsumer:
                     "price": item_entry.price
                 }
                 self.publish_message(properties, response)
+
+            elif msg['action'] == "add_stock":
+                new_stock = add_amount(msg['item_id'], msg['amount'])
+                response = {
+                    "item_id": msg['item_id'],
+                    "stock": new_stock
+                }
+                self.publish_message(properties, response)
+
+            elif msg['action'] == "remove_stock":
+                new_stock = remove_amount(msg['item_id'], msg['amount'])
+                response = {
+                    "item_id": msg['item_id'],
+                    "stock": new_stock
+                }
+                self.publish_message(properties, response)
+
 
 
         except RedisDBError:

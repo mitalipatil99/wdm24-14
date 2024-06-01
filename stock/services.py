@@ -85,22 +85,20 @@ def add_amount(item_id: str, amount: int, item_upd: str = 'api'):
         db.set(item_id, msgpack.encode(item_entry))
     except redis.exceptions.RedisError:
         raise RedisDBError
-    return Response(f"Item: {item_id} stock updated to: {item_entry.stock}", status=200)
+    return item_entry.stock
 
 
 def remove_amount(item_id: str, amount: int, item_upd: str = 'api'):
     item_entry: StockValue = get_item(item_id)
     item_entry.stock -= int(amount)
-    # app.logger.debug(f"Item: {item_id} stock updated to: {item_entry.stock}")
     if item_entry.stock < 0:
         raise InsufficientStockError
-        # abort(400, f"Item: {item_id} stock cannot get reduced below zero!")
     try:
         item_entry.last_upd = set_updated_str(item_entry.last_upd, item_upd)
         db.set(item_id, msgpack.encode(item_entry))
     except redis.exceptions.RedisError:
         raise RedisDBError
-    return Response(f"Item: {item_id} stock updated to: {item_entry.stock}", status=200)
+    return item_entry.stock
 
 
 def add_amount_bulk(message: dict):
@@ -121,7 +119,6 @@ def add_amount_bulk(message: dict):
         db.mset(stocks_upd)
     except redis.exceptions.RedisError:
         raise RedisDBError
-    return Response(f"Items: {item_ids} stock updated", status=200)
 
 
 def remove_amount_bulk(message: dict):
@@ -144,7 +141,6 @@ def remove_amount_bulk(message: dict):
         db.mset(stocks_upd)
     except redis.exceptions.RedisError:
         raise RedisDBError
-    return Response(f"Items: {item_ids} stock updated", status=200)
 
 
 # def stock_command_event_processor(message: IncomingMessage):
