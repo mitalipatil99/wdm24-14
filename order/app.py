@@ -14,7 +14,6 @@ from exceptions import RedisDBError
 from services import add_item_db, get_order_by_id_db, create_order_db, batch_init_users_db, add_item_db
 from orchestrator import CreateOrderRequestSaga
 
-from amqp_client import AMQPClient
 
 DB_ERROR_STR = "DB error"
 REQ_ERROR_STR = "Requests error"
@@ -187,9 +186,9 @@ async def checkout(order_id: str):
     return Response("Checkout successful", status=200)
 
 
-if __name__ == '__main__':
-    app.run(host="0.0.0.0", port=8000, debug=True)
-else:
-    gunicorn_logger = logging.getLogger('gunicorn.error')
-    app.logger.handlers = gunicorn_logger.handlers
-    app.logger.setLevel(gunicorn_logger.level)
+# if __name__ == '__main__':
+#     app.run(host="0.0.0.0", port=8000, debug=True)
+# else:
+#     gunicorn_logger = logging.getLogger('gunicorn.error')
+#     app.logger.handlers = gunicorn_logger.handlers
+#     app.logger.setLevel(gunicorn_logger.level)
