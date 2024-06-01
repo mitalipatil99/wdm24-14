@@ -2,7 +2,8 @@ import logging
 import threading
 import uuid
 import pika
-
+import os
+from threading import Thread
 from msgspec import msgpack, Struct
 from flask import Flask, jsonify, abort, Response
 
@@ -22,7 +23,7 @@ class StockValue(Struct):
 
 class RabbitMQClient:
     def __init__(self):
-        self.connection = pika.BlockingConnection(pika.ConnectionParameters('localhost'))
+        self.connection = pika.BlockingConnection(pika.URLParameters("amqp://guest:guest@so-rabbit:5672"))
         self.channel = self.connection.channel()
         self.channel.queue_declare(queue='stock_queue')
 
@@ -56,16 +57,37 @@ class RabbitMQClient:
 
 rabbitmq_client = RabbitMQClient()
 
+class ThreadWithReturnValue(Thread):
+    
+    def __init__(self, group=None, target=None, name=None,
+                 args=(), kwargs={}, Verbose=None):
+        Thread.__init__(self, group, target, name, args, kwargs)
+        self._return = None
+
+    def run(self):
+        if self._target is not None:
+            self._return = self._target(*self._args,
+                                                **self._kwargs)
+    def join(self, *args):
+        Thread.join(self, *args)
+        return self._return
+
 
 def threaded(fn):
     def wrapper(*args, **kwargs):
         def callback():
-            return fn(*args, **kwargs)
-
-        thread = threading.Thread(target=callback)
+            try:
+                return fn(*args, **kwargs)
+            except Exception as e:
+                app.logger.error(f"Error in thread: {e}")
+        
+        thread = ThreadWithReturnValue(target=callback)
         thread.start()
-        thread.join()
+        ret = thread.join()
+        print(f"woahh {ret}")
+        return ret
 
+    wrapper.__name__ = f"{fn.__name__}_wrapper"
     return wrapper
 
 
@@ -77,8 +99,8 @@ def create_item(price: int):
     except RedisDBError:
         return abort(400, DB_ERROR_STR)
 
-    response = rabbitmq_client.call({'action': 'create_item', 'item_id': key, 'price': price})
-    return jsonify(response)
+    # response = rabbitmq_client.call({'action': 'create_item', 'item_id': key, 'price': price})
+    return key
 
 
 @app.post('/batch_init/<n>/<starting_stock>/<item_price>')
