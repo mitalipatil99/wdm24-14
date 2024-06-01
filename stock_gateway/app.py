@@ -95,28 +95,28 @@ def create_item(price: int):
 def batch_init_users(n: int, starting_stock: int, item_price: int):
     response = rabbitmq_client.call(
         {'action': 'batch_init', 'n': n, 'starting_stock': starting_stock, 'item_price': item_price})
-    return jsonify(response)
+    return response
 
 
 @app.get('/find/<item_id>')
 @threaded
 def find_item(item_id: str):
     response = rabbitmq_client.call({'action': 'find_item', 'item_id': item_id})
-    return jsonify(response)
+    return response
 
 
 @app.post('/add/<item_id>/<amount>')
 @threaded
 def add_stock(item_id: str, amount: int):
     response = rabbitmq_client.call({'action': 'add_stock', 'item_id': item_id, 'amount': amount})
-    return jsonify(response)
+    return response
 
 
 @app.post('/subtract/<item_id>/<amount>')
 @threaded
 def remove_stock(item_id: str, amount: int):
     response = rabbitmq_client.call({'action': 'remove_stock', 'item_id': item_id, 'amount': amount})
-    return jsonify(response)
+    return response
 
 
 if __name__ == '__main__':
