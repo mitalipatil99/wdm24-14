@@ -2,7 +2,8 @@ import pika
 from msgspec import msgpack
 import os
 from exceptions import RedisDBError
-from services import create_order_db
+from services import create_order_db, get_order_by_id_db
+
 
 class RabbitMQConsumer:
 
@@ -24,11 +25,49 @@ class RabbitMQConsumer:
     def callback(self, ch, method, properties, body):
         msg = msgpack.decode(body)
         print(msg)
-        ch.basic_ack(delivery_tag=method.delivery_tag)  
+        ch.basic_ack(delivery_tag=method.delivery_tag)
         try:
-            if msg['action'] == "create_order":
-                key = create_order_db(msg['user_id'])
-                self.publish_message(properties, {"order_id": key})
+            if msg['action'] == "find_order":
+                entry = get_order_by_id_db(msg['order_id'])
+                response = {
+                    "paid": entry.paid,
+                    "items": entry.items,
+                    "user_id": entry.user_id,
+                    "total_cost" : entry.total_cost
+                }
+                self.publish_message(properties, response)
+
+
+            elif msg['action'] == "batch_init":
+                set_users(msg['n'], msg['starting_stock'], msg['item_price'])
+                self.publish_message(properties, {"msg": "Batch init for stock successful"})
+
+
+            elif msg['action'] == "find_item":
+                item_entry = get_item(msg['item_id'])
+                response = {
+                    "stock": item_entry.stock,
+                    "price": item_entry.price
+                }
+                self.publish_message(properties, response)
+
+            elif msg['action'] == "add_stock":
+                new_stock = add_amount(msg['item_id'], msg['amount'])
+                response = {
+                    "item_id": msg['item_id'],
+                    "stock": new_stock
+                }
+                self.publish_message(properties, response)
+
+            elif msg['action'] == "remove_stock":
+                new_stock = remove_amount(msg['item_id'], msg['amount'])
+                response = {
+                    "item_id": msg['item_id'],
+                    "stock": new_stock
+                }
+                self.publish_message(properties, response)
+
+
 
         except RedisDBError:
             print("woaaaaaaaaaaaaaaaaaaaaaaaaaah")
