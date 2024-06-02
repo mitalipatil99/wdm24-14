@@ -5,7 +5,7 @@ import os
 from threading import Thread
 from msgspec import msgpack, Struct
 from flask import Flask, jsonify, abort, Response
-
+from config import STATUS_CLIENT_ERROR, STATUS_SUCCESS, STATUS_SERVER_ERROR
 DB_ERROR_STR = "DB error"
 
 app = Flask("stock-gateway")
@@ -73,11 +73,12 @@ def threaded(fn):
         
         thread = ThreadWithReturnValue(target=callback)
         thread.start()
-        # handle status code
-        ret = thread.join()
-        print(f"woahh {ret}")
-        app.logger.error(f"woahh {ret}")
-        return jsonify(ret)
+        response = thread.join()
+        app.logger.info(f"Response: {response}")
+        if response['status'] == STATUS_SUCCESS:
+            return jsonify(response['data'])
+        else:
+            return abort(response['status'], response['data'] )
 
     wrapper.__name__ = f"{fn.__name__}_wrapper"
     return wrapper

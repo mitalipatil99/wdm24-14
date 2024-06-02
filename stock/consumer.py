@@ -2,12 +2,16 @@ import pika
 from services import set_new_item, set_users, get_item, add_amount, remove_amount, remove_amount_bulk, add_amount_bulk
 from msgspec import msgpack
 import os
-from exceptions import RedisDBError
+from exceptions import ItemNotFoundError, RedisDBError, InsufficientStockError
+from config import STOCK_QUEUE, ORDER_QUEUE, STATUS_SUCCESS, STATUS_CLIENT_ERROR, STATUS_SERVER_ERROR, DB_ERROR_STR, REQ_ERROR_STR, SERV_ERROR_STR
+
+def generate_response(status, data={}):
+    return {"status":status, "data":data}
 
 class RabbitMQConsumer:
 
     def declare_queues(self):
-        self.channel.queue_declare("stock_queue")
+        self.channel.queue_declare(STOCK_QUEUE)
 
     def connect(self):
         try:
@@ -29,21 +33,21 @@ class RabbitMQConsumer:
             if msg['action'] == "create_item":
                 key = set_new_item(msg['price'])
                 print(properties.reply_to)
-                self.publish_message(properties, {"item_id":key})
-                
+                self.publish_message(properties, generate_response(STATUS_SUCCESS, {"item_id":key}))
             
             elif msg['action'] == "batch_init":
                 set_users(msg['n'], msg['starting_stock'], msg['item_price'])
-                self.publish_message(properties, {"msg": "Batch init for stock successful"})
-
+                self.publish_message(properties, generate_response(STATUS_SUCCESS,{"msg": "Batch init for stock successful"}))
             
             elif msg['action'] == "find_item":
                 item_entry = get_item(msg['item_id'])
-                response = {
+                data = {
                     "stock": item_entry.stock,
                     "price": item_entry.price
                 }
-                self.publish_message(properties, response)
+                self.publish_message(properties, generate_response(STATUS_SUCCESS, data))
+
+
 
             elif msg['action'] == "add_stock":
                 new_stock = add_amount(msg['item_id'], msg['amount'])
@@ -51,7 +55,9 @@ class RabbitMQConsumer:
                     "item_id": msg['item_id'],
                     "stock": new_stock
                 }
-                self.publish_message(properties, response)
+                self.publish_message(properties, generate_response(STATUS_SUCCESS, response))
+
+
 
             elif msg['action'] == "remove_stock":
                 new_stock = remove_amount(msg['item_id'], msg['amount'])
@@ -59,33 +65,38 @@ class RabbitMQConsumer:
                     "item_id": msg['item_id'],
                     "stock": new_stock
                 }
-                self.publish_message(properties, response)
+                self.publish_message(properties, generate_response(STATUS_SUCCESS, response))
+
 
             elif msg['action'] == "remove_stock_bulk":
                 remove_amount_bulk(msg['data'], msg['order_id'])
                 response = {
-                    "item_id": msg['order_id'],
-                    # "stock": new_stock
+                    "order_id": msg['order_id'],
                 }
-                self.publish_message(properties, response)
+                self.publish_message(properties, generate_response(response))
+
 
             elif msg['action'] == "add_stock_bulk":
                 add_amount_bulk(msg['data'])
                 response = {
                     "item_id": msg['item_id'],
-                    # "stock": new_stock
                 }
-                self.publish_message(properties, response)
+                self.publish_message(properties, generate_response(STATUS_SUCCESS, response))
 
 
-
-        except RedisDBError:
-            self.publish_message(properties, {"status": 400, "message":"woah"} )
+        except RedisDBError as e:
+            self.publish_message(properties, generate_response(STATUS_SERVER_ERROR, DB_ERROR_STR ))
+        except ItemNotFoundError as e:
+            self.publish_message(properties, generate_response(STATUS_CLIENT_ERROR, REQ_ERROR_STR))
+        except InsufficientStockError as e:
+            self.publish_message(properties, generate_response(STATUS_CLIENT_ERROR, REQ_ERROR_STR))
+        except Exception as e:
+            self.publish_message(properties, generate_response(STATUS_SERVER_ERROR, SERV_ERROR_STR) )
 
 
     def start_consuming(self):
         self.channel.basic_qos(prefetch_count=1)
-        self.channel.basic_consume(queue="stock_queue", on_message_callback=self.callback)
+        self.channel.basic_consume(queue=STOCK_QUEUE, on_message_callback=self.callback)
         try:
             self.channel.start_consuming()
         except Exception as e:
