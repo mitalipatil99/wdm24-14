@@ -4,7 +4,8 @@ import pika
 import os
 from threading import Thread
 from msgspec import msgpack, Struct
-from flask import Flask, jsonify, abort, Response
+from flask import Flask, jsonify, abort, Response, request
+from datetime import datetime
 from config import *
 
 DB_ERROR_STR = "DB error"
@@ -66,7 +67,13 @@ class ThreadWithReturnValue(Thread):
 
 def threaded(fn):
     def wrapper(*args, **kwargs):
+        endpoint = request.endpoint
+        request_data = request.get_json() if request.is_json else request.values.to_dict()
+        timestamp = datetime.now()
+        app.logger.info(f"[{timestamp}] API: {endpoint} | {request_data}")
+            
         def callback():
+                
             try:
                 return fn(*args, **kwargs)
             except Exception as e:

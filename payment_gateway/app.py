@@ -4,7 +4,8 @@ import pika
 import os
 from threading import Thread
 from msgspec import msgpack
-from flask import Flask, jsonify, abort
+from flask import Flask, jsonify, abort, request
+from datetime import datetime
 from config import *
 
 app = Flask("payment-gateway")
@@ -65,9 +66,15 @@ class ThreadWithReturnValue(Thread):
 
 def threaded(fn):
     def wrapper(*args, **kwargs):
+        endpoint = request.endpoint
+        request_data = request.get_json() if request.is_json else request.values.to_dict()
+        timestamp = datetime.now()
+        app.logger.info(f"[{timestamp}] API: {endpoint} | {request_data}")
+            
         def callback():
+              
             try:
-                return fn(*args, **kwargs)
+                  return fn(*args, **kwargs)
             except Exception as e:
                 app.logger.error(f"Error in thread: {e}")
 

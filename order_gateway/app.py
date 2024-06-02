@@ -6,9 +6,9 @@ import pika
 import os
 from threading import Thread
 from msgspec import msgpack, Struct
-from flask import Flask, jsonify, abort, Response
-
-DB_ERROR_STR = "DB error"
+from flask import Flask, jsonify, abort, Response, request
+from config import *
+from datetime import datetime
 
 app = Flask("order-gateway")
 
@@ -22,9 +22,9 @@ class RabbitMQClient:
     def __init__(self):
         self.connection = pika.BlockingConnection(pika.URLParameters(os.environ['RABBITMQ_BROKER_URL']))
         self.channel = self.connection.channel()
-        self.channel.queue_declare(queue='order_queue')
-        self.channel.queue_declare(queue='stock_queue')
-        self.channel.queue_declare(queue='payment_queue')
+        self.channel.queue_declare(queue=ORDER_QUEUE)
+        self.channel.queue_declare(queue=STOCK_QUEUE)
+        self.channel.queue_declare(queue=PAYMENT_QUEUE)
 
 
     def call(self, message, queue):
@@ -75,20 +75,31 @@ class ThreadWithReturnValue(Thread):
 
 def threaded(fn):
     def wrapper(*args, **kwargs):
+        endpoint = request.endpoint
+        request_data = request.get_json() if request.is_json else request.get_data()
+        timestamp = datetime.now()
+        app.logger.info(f"[{timestamp}] API: {endpoint} | {request_data}")        
+        
         def callback():
             try:
+                # endpoint = request.endpoint
+                # request_data = request.get_json() if request.is_json else request.values.to_dict()
+                # timestamp = datetime.utcnow().isoformat()
+                # app.logger.info(f"[{timestamp}] API: {endpoint} | {request_data}")
                 return fn(*args, **kwargs)
             except Exception as e:
                 app.logger.error(f"Error in thread: {e}")
+                return {"status":500, "data":f"{e}"}
         
         thread = ThreadWithReturnValue(target=callback)
         thread.start()
-        # handle status code
-        ret = thread.join()
-        app.logger.debug(f"woahh {ret}")
-        if ret['status'] == 200:
-            return Response(ret['msg'], ret['status'])
-        return jsonify(ret)
+        response = thread.join()
+        app.logger.info(f"Response: {response}")
+        if response['status'] == STATUS_SUCCESS:
+            return jsonify(response['data'])
+        else:
+            return abort(response['status'], response['data'] )
+
 
     wrapper.__name__ = f"{fn.__name__}_wrapper"
     return wrapper
@@ -97,7 +108,7 @@ def threaded(fn):
 @app.post('/create/<user_id>')
 @threaded
 def create_order(user_id: str):
-    response = rabbitmq_client.call({'action': 'create_order','user_id':user_id}, 'order_queue')
+    response = rabbitmq_client.call({'action': 'create_order','user_id':user_id}, ORDER_QUEUE)
     return response
 
 
@@ -124,14 +135,14 @@ def batch_init_users(n: int, n_items: int, n_users: int, item_price: int):
     kv_pairs: dict[str, bytes] = {f"{i}": msgpack.encode(generate_entry())
                                   for i in range(n)}
 
-    response = rabbitmq_client.call({'action': 'batch_init_users','kv_pairs':kv_pairs}, 'order_queue')
+    response = rabbitmq_client.call({'action': 'batch_init_users','kv_pairs':kv_pairs}, ORDER_QUEUE)
     return response
 
 
 @app.get('/find/<order_id>')
 @threaded
 def find_order(order_id: str):
-    response = rabbitmq_client.call({'action': 'find_order','order_id':order_id}, 'order_queue')
+    response = rabbitmq_client.call({'action': 'find_order','order_id':order_id}, ORDER_QUEUE)
     return response
 
 
@@ -139,38 +150,54 @@ def find_order(order_id: str):
 @threaded
 def add_item(order_id: str, item_id: str, quantity: int):
     
-    order_details = rabbitmq_client.call({'action': 'find_order','order_id':order_id}, 'order_queue')
-    item_details = rabbitmq_client.call({'action':'find_item', 'item_id': item_id}, 'stock_queue')
-    # check status
+    order_details = rabbitmq_client.call({'action': 'find_order','order_id':order_id}, ORDER_QUEUE)
+    if order_details['status'] != 200:
+        return order_details
+    order_details = order_details['data']
+
+    item_details = rabbitmq_client.call({'action':'find_item', 'item_id': item_id}, STOCK_QUEUE)
+    if item_details['status'] != 200:
+        return item_details
+    item_details = item_details['data']
+
     order_details['items'].append((item_id, int(quantity)))
     order_details['total_cost'] += int(quantity) * item_details['price']
 
-    response = rabbitmq_client.call({'action': 'add_item','order_id':order_id,'order_entry': order_details}, 'order_queue')
+    response = rabbitmq_client.call({'action': 'add_item','order_id':order_id,'order_entry': order_details}, ORDER_QUEUE)
+    if response['status']!=200:
+        return response
+    response['data'] = f"Item: {item_id} added to: {order_id} price updated to: {order_details["total_cost"]}"
     return response
 
 @app.post('/checkout/<order_id>')
 @threaded
 def checkout(order_id: str):
     app.logger.debug(f"Checking out {order_id}")
-    order_details = rabbitmq_client.call({'action': 'find_order','order_id':order_id}, 'order_queue')
+    order_details = rabbitmq_client.call({'action': 'find_order','order_id':order_id}, ORDER_QUEUE)
+    if order_details['status']!= 200:
+        return order_details
+    order_details = order_details['data']
+    
     item_data = {}
     for item in order_details['items']:
         item_data[item[0]] = item[1]
-    stock_sub_response = rabbitmq_client.call({'action': 'remove_stock_bulk','data':item_data, 'order_id': order_id}, 'stock_queue')
-    # if stock_sub_response['status'] != 200:
-    #     stock_add_response = rabbitmq_client.call({'action':'add_stock_bulk', 'data':item}, 'stock_queue')
-    #     return {}
-
-    payment = rabbitmq_client.call({'action': 'remove_credit','user_id':order_details['user_id'], 'amount': order_details['total_cost']}, 'payment_queue')
-    # print(order_details_response)
-    app.logger.info(payment)
     
-
-
-    app.logger.debug("Checkout successful")
-    return {"msg": "checkout successful", "status":200}
-    # return Response("Checkout successful", status=200)
-
+    stock_sub_response = rabbitmq_client.call({'action': 'remove_stock_bulk','data':item_data, 'order_id': order_id}, STOCK_QUEUE)
+    if stock_sub_response['status'] != 200:
+        if stock_sub_response['status'] == 500:
+            stock_add_response = rabbitmq_client.call({'action':'add_stock_bulk', 'data':item}, STOCK_QUEUE)
+        return stock_sub_response
+    
+    payment_sub_response = rabbitmq_client.call({'action': 'remove_credit','user_id':order_details['user_id'], 'amount': order_details['total_cost']}, PAYMENT_QUEUE)
+    if payment_sub_response['status'] != 200:
+        # Fix response
+        if payment_sub_response['status'] == 500:
+            payment_add_response = rabbitmq_client.call({'action': 'add_funds','user_id':order_details['user_id'], 'amount': order_details['total_cost']}, PAYMENT_QUEUE)
+        stock_add_response = rabbitmq_client.call({'action':'add_stock_bulk', 'data':item}, STOCK_QUEUE)
+        return payment_sub_response
+    order_details['paid'] = True
+    confirm_order_response = rabbitmq_client.call({'action':'confirm_order', 'order_id': order_id, 'order_entry': order_details}, ORDER_QUEUE)
+    return confirm_order_response
 
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=8000, debug=True)

@@ -5,7 +5,7 @@ from exceptions import RedisDBError, InsufficientCreditError
 from services import create_user_db, batch_init_db, get_user_db, add_credit_db, remove_credit_db
 from config import *
 import os
-
+import logging
 
 def generate_response(status, data={}):
     return {"status":status, "data":data}
@@ -15,6 +15,15 @@ class RabbitMQConsumer:
 
     def declare_queues(self):
         self.channel.queue_declare(PAYMENT_QUEUE)
+
+    def setup_logger(self):
+        self.logger = logging.getLogger("OrderService")
+        self.logger.setLevel(logging.INFO)
+        handler = logging.StreamHandler()
+        handler.setLevel(logging.INFO)
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        handler.setFormatter(formatter)
+        self.logger.addHandler(handler)
 
     def connect(self):
         try:
@@ -27,10 +36,12 @@ class RabbitMQConsumer:
 
     def __init__(self) -> None:
         self.channel = None
+        self.setup_logger()
 
     def callback(self, ch, method, properties, body):
         msg = msgpack.decode(body)
-        print(msg)
+        self.logger.info(f"[{properties.reply_to}] : {msg}")
+
         ch.basic_ack(delivery_tag=method.delivery_tag)  # Acknowledge the message
         try:
             if msg['action'] == "create_user":
@@ -38,7 +49,6 @@ class RabbitMQConsumer:
                 self.publish_message(properties, generate_response(STATUS_SUCCESS, {"user_id": key}))
 
             elif msg['action'] == "batch_init":
-                print("hehe")
                 batch_init_db(msg['n'], msg['starting_money'])
                 self.publish_message(properties, generate_response(STATUS_SUCCESS, {"msg": "Batch init for payment successful"}))
 
@@ -67,10 +77,13 @@ class RabbitMQConsumer:
                 self.publish_message(properties, generate_response(STATUS_SUCCESS, response))
 
         except RedisDBError as e:
+            self.logger.error(f"[{properties.reply_to}] { msg['action']} : {msg} {e}")
             self.publish_message(properties, generate_response(STATUS_SERVER_ERROR, DB_ERROR_STR ))
         except InsufficientCreditError as e:
+            self.logger.error(f"[{properties.reply_to}] { msg['action']} : {msg} {e}")
             self.publish_message(properties, generate_response(STATUS_CLIENT_ERROR, REQ_ERROR_STR))
         except Exception as e:
+            self.logger.error(f"[{properties.reply_to}] { msg['action']} : {msg} {e}")
             self.publish_message(properties, generate_response(STATUS_SERVER_ERROR, SERV_ERROR_STR) )
 
     def start_consuming(self):
@@ -83,6 +96,7 @@ class RabbitMQConsumer:
             print(e)
 
     def publish_message(self, properties, response):
+        self.logger.info(f"[{properties.reply_to}] Response: {response}")
         self.channel.basic_publish(
             exchange='',
             routing_key=properties.reply_to,
