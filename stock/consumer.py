@@ -89,16 +89,14 @@ class RabbitMQConsumer:
 
             elif msg['action'] == "add_stock_bulk":
                 add_amount_bulk(msg['data'])
-                response = {
-                    "item_id": msg['item_id'],
-                }
-                self.publish_message(properties, generate_response(STATUS_SUCCESS, response))
+                self.publish_message(properties, generate_response(STATUS_SUCCESS))
 
 
         except RedisDBError as e:
             self.logger.error(f"[{properties.reply_to}] { msg['action']} : {msg} {e}")
             self.publish_message(properties, generate_response(STATUS_SERVER_ERROR, DB_ERROR_STR ))
         except ItemNotFoundError as e:
+            self.logger.error(f"[{properties.reply_to}] { msg['action']} : {msg} {e}")
             self.publish_message(properties, generate_response(STATUS_CLIENT_ERROR, REQ_ERROR_STR))
         except InsufficientStockError as e:
             self.logger.error(f"[{properties.reply_to}] { msg['action']} : {msg} {e}")

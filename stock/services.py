@@ -102,19 +102,20 @@ def remove_amount(item_id: str, amount: int, item_upd: str = 'api'):
 
 
 def add_amount_bulk(message: dict):
-    item_ids = list(message['data'].keys())
+    item_ids = list(message.keys())
     items = get_item_bulk(item_ids)
     stocks_upd = dict()
     for i in range(len(items)):
+
         item : StockValue | None = msgpack.decode(items[i], type=StockValue) if items[i] else None
-        item.stock += int(message['data'][item_ids[i]])
+        item.stock += int(message[item_ids[i]])
         items[i] = item
+        # TODO: What should be the last_upd here
         stocks_upd[item_ids[i]] = msgpack.encode(
-            StockValue(stock=item_ids[i].stock, 
-                       price=item_ids[i].price, 
-                       last_upd= set_updated_str(
-                           item_ids[i].last_upd, 
-                           message['key'])))
+            StockValue(stock=items[i].stock, 
+                       price=items[i].price, 
+                       last_upd=set_updated_str(items[i].last_upd, "")
+                      ))
     try:
         db.mset(stocks_upd)
     except redis.exceptions.RedisError:

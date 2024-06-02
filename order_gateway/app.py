@@ -185,7 +185,7 @@ def checkout(order_id: str):
     stock_sub_response = rabbitmq_client.call({'action': 'remove_stock_bulk','data':item_data, 'order_id': order_id}, STOCK_QUEUE)
     if stock_sub_response['status'] != 200:
         if stock_sub_response['status'] == 500:
-            stock_add_response = rabbitmq_client.call({'action':'add_stock_bulk', 'data':item}, STOCK_QUEUE)
+            stock_add_response = rabbitmq_client.call({'action':'add_stock_bulk', 'data':item_data}, STOCK_QUEUE)
         return stock_sub_response
     
     payment_sub_response = rabbitmq_client.call({'action': 'remove_credit','user_id':order_details['user_id'], 'amount': order_details['total_cost']}, PAYMENT_QUEUE)
@@ -193,7 +193,8 @@ def checkout(order_id: str):
         # Fix response
         if payment_sub_response['status'] == 500:
             payment_add_response = rabbitmq_client.call({'action': 'add_funds','user_id':order_details['user_id'], 'amount': order_details['total_cost']}, PAYMENT_QUEUE)
-        stock_add_response = rabbitmq_client.call({'action':'add_stock_bulk', 'data':item}, STOCK_QUEUE)
+        stock_add_response = rabbitmq_client.call({'action':'add_stock_bulk', 'data':item_data}, STOCK_QUEUE)
+        app.logger.error(f"woaaaaaaaaaaaaah, {stock_add_response}")
         return payment_sub_response
     order_details['paid'] = True
     confirm_order_response = rabbitmq_client.call({'action':'confirm_order', 'order_id': order_id, 'order_entry': order_details}, ORDER_QUEUE)
