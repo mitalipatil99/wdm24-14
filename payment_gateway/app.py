@@ -4,7 +4,8 @@ import pika
 import os
 from threading import Thread
 from msgspec import msgpack
-from flask import Flask, jsonify
+from flask import Flask, jsonify, abort
+from config import *
 
 app = Flask("payment-gateway")
 
@@ -12,7 +13,7 @@ class RabbitMQClient:
     def __init__(self):
         self.connection = pika.BlockingConnection(pika.URLParameters(os.environ['RABBITMQ_BROKER_URL']))
         self.channel = self.connection.channel()
-        self.channel.queue_declare(queue='payment_queue')
+        self.channel.queue_declare(queue=PAYMENT_QUEUE)
 
     def call(self, message):
         corr_id = str(uuid.uuid4())
@@ -28,7 +29,7 @@ class RabbitMQClient:
         self.response = None
         self.channel.basic_publish(
             exchange='',
-            routing_key='payment_queue',
+            routing_key=PAYMENT_QUEUE,
             properties=pika.BasicProperties(
                 reply_to=response_queue,
                 correlation_id=corr_id,
@@ -72,11 +73,12 @@ def threaded(fn):
 
         thread = ThreadWithReturnValue(target=callback)
         thread.start()
-        # handle status code
-        ret = thread.join()
-        print(f"woahh {ret}")
-        app.logger.error(f"woahh {ret}")
-        return jsonify(ret)
+        response = thread.join()
+        app.logger.info(f"Response: {response}")
+        if response['status'] == STATUS_SUCCESS:
+            return jsonify(response['data'])
+        else:
+            return abort(response['status'], response['data'] )
 
     wrapper.__name__ = f"{fn.__name__}_wrapper"
     return wrapper

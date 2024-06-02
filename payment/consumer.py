@@ -1,19 +1,24 @@
 import pika
 from msgspec import msgpack
 
-from exceptions import RedisDBError
+from exceptions import RedisDBError, InsufficientCreditError
 from services import create_user_db, batch_init_db, get_user_db, add_credit_db, remove_credit_db
+from config import *
+import os
+
+
+def generate_response(status, data={}):
+    return {"status":status, "data":data}
 
 
 class RabbitMQConsumer:
 
     def declare_queues(self):
-        self.channel.queue_declare("payment_queue")
-        # self.channel.queue_bind("stock_queue", "ORCHESTRATION_SAGA", "stock_queue")
+        self.channel.queue_declare(PAYMENT_QUEUE)
 
     def connect(self):
         try:
-            connection = pika.BlockingConnection(pika.URLParameters("amqp://guest:guest@so-rabbit:5672"))
+            connection = pika.BlockingConnection(pika.URLParameters(os.environ['RABBITMQ_BROKER_URL']))
             channel = connection.channel()
             self.channel = channel
             self.declare_queues()
@@ -30,12 +35,12 @@ class RabbitMQConsumer:
         try:
             if msg['action'] == "create_user":
                 key = create_user_db()
-                self.publish_message(properties, {"user_id": key})
+                self.publish_message(properties, generate_response(STATUS_SUCCESS, {"user_id": key}))
 
             elif msg['action'] == "batch_init":
                 print("hehe")
                 batch_init_db(msg['n'], msg['starting_money'])
-                self.publish_message(properties, {"msg": "Batch init for payment successful"})
+                self.publish_message(properties, generate_response(STATUS_SUCCESS, {"msg": "Batch init for payment successful"}))
 
             elif msg['action'] == "find_user":
                 user_entry = get_user_db(msg['user_id'])
@@ -43,7 +48,7 @@ class RabbitMQConsumer:
                     "credit": user_entry.credit,
                     "last_upd": user_entry.last_upd
                 }
-                self.publish_message(properties, response)
+                self.publish_message(properties, generate_response(STATUS_SUCCESS, response))
 
             elif msg['action'] == "add_funds":
                 user_entry = add_credit_db(msg['user_id'], msg['amount'])
@@ -51,7 +56,7 @@ class RabbitMQConsumer:
                     "credit": user_entry.credit,
                     "last_upd": user_entry.last_upd
                 }
-                self.publish_message(properties, response)
+                self.publish_message(properties, generate_response(STATUS_SUCCESS, response))
 
             elif msg['action'] == "remove_credit":
                 user_entry = remove_credit_db(msg['user_id'], msg['amount'])
@@ -59,15 +64,19 @@ class RabbitMQConsumer:
                     "credit": user_entry.credit,
                     "last_upd": user_entry.last_upd
                 }
-                self.publish_message(properties, response)
+                self.publish_message(properties, generate_response(STATUS_SUCCESS, response))
 
-        except RedisDBError:
-            print("AAAAHHHHHHHHHHHHHHHHHHHHHHHH")
+        except RedisDBError as e:
+            self.publish_message(properties, generate_response(STATUS_SERVER_ERROR, DB_ERROR_STR ))
+        except InsufficientCreditError as e:
+            self.publish_message(properties, generate_response(STATUS_CLIENT_ERROR, REQ_ERROR_STR))
+        except Exception as e:
+            self.publish_message(properties, generate_response(STATUS_SERVER_ERROR, SERV_ERROR_STR) )
 
     def start_consuming(self):
         self.channel.basic_qos(prefetch_count=1)
-        self.channel.basic_consume(queue="payment_queue", on_message_callback=self.callback)
-        # self.channel.basic_consume(queue=STOCK_SUBTRACT, on_message_callback=self.callback)
+        self.channel.basic_consume(queue=PAYMENT_QUEUE, on_message_callback=self.callback)
+
         try:
             self.channel.start_consuming()
         except Exception as e:

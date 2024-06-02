@@ -3,7 +3,8 @@ from services import set_new_item, set_users, get_item, add_amount, remove_amoun
 from msgspec import msgpack
 import os
 from exceptions import ItemNotFoundError, RedisDBError, InsufficientStockError
-from config import STOCK_QUEUE, ORDER_QUEUE, STATUS_SUCCESS, STATUS_CLIENT_ERROR, STATUS_SERVER_ERROR, DB_ERROR_STR, REQ_ERROR_STR, SERV_ERROR_STR
+from config import *
+
 
 def generate_response(status, data={}):
     return {"status":status, "data":data}

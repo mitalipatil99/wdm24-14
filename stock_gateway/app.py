@@ -5,7 +5,8 @@ import os
 from threading import Thread
 from msgspec import msgpack, Struct
 from flask import Flask, jsonify, abort, Response
-from config import STATUS_CLIENT_ERROR, STATUS_SUCCESS, STATUS_SERVER_ERROR
+from config import *
+
 DB_ERROR_STR = "DB error"
 
 app = Flask("stock-gateway")
@@ -15,7 +16,7 @@ class RabbitMQClient:
     def __init__(self):
         self.connection = pika.BlockingConnection(pika.URLParameters(os.environ['RABBITMQ_BROKER_URL']))
         self.channel = self.connection.channel()
-        self.channel.queue_declare(queue='stock_queue')
+        self.channel.queue_declare(queue=STOCK_QUEUE)
 
     def call(self, message):
         corr_id = str(uuid.uuid4())
@@ -31,7 +32,7 @@ class RabbitMQClient:
         self.response = None
         self.channel.basic_publish(
             exchange='',
-            routing_key='stock_queue',
+            routing_key=STOCK_QUEUE,
             properties=pika.BasicProperties(
                 reply_to=response_queue,
                 correlation_id=corr_id,
