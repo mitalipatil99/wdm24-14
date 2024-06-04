@@ -9,3 +9,6 @@ STATUS_SERVER_ERROR = 500
 DB_ERROR_STR = "DB error"
 REQ_ERROR_STR = "Requests error"
 SERV_ERROR_STR = "Server error"
+
+MAX_RETRIES = 3
+SLEEP_TIME = 10

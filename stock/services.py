@@ -1,26 +1,39 @@
 import os
+import time
 import atexit
 import uuid
 import redis
+from msgspec import msgpack
+from config import *
 
-from msgspec import msgpack, Struct
+from model import StockValue
 from exceptions import RedisDBError, ItemNotFoundError, InsufficientStockError
 
-
-class StockValue(Struct):
-    stock: int
-    price: int
-    last_upd: str
-
-db: redis.Redis = redis.Redis(host=os.environ['REDIS_HOST'],
+def connect_redis():
+    db_conn: redis.Redis = redis.Redis(host=os.environ['REDIS_HOST'],
                               port=int(os.environ['REDIS_PORT']),
                               password=os.environ['REDIS_PASSWORD'],
                               db=int(os.environ['REDIS_DB']))
+    return db_conn
 
+def retry_connection():
+    global db 
+    for attempt in range(1, MAX_RETRIES):
+        try: 
+            db = connect_redis()
+            db.ping()
+        except redis.exceptions.ConnectionError:
+            if attempt < MAX_RETRIES:
+                time.sleep(SLEEP_TIME)
+            else:
+                raise RedisDBError
+                
 
-def close_db_connection() -> StockValue | None:
+def close_db_connection():
     db.close()
 
+
+db = connect_redis()
 atexit.register(close_db_connection)
 
 
@@ -35,6 +48,9 @@ def set_updated_str(last_upd_str: str, new_upd: str):
 def get_item(item_id: str) -> str:
     try:
         entry = db.get(item_id)
+    except redis.exceptions.ConnectionError:
+        retry_connection()
+        entry = db.get(item_id)
     except redis.exceptions.RedisError:
         raise RedisDBError
     entry: StockValue | None = msgpack.decode(entry, type=StockValue) if entry else None
@@ -48,6 +64,9 @@ def get_item(item_id: str) -> str:
 def get_item_bulk(item_ids: list) -> list:
     try:
         entries = db.mget(item_ids)
+    except redis.exceptions.ConnectionError:
+        retry_connection()
+        entries = db.mget(item_ids)
     except redis.exceptions.RedisError:
         raise RedisDBError
     return entries
@@ -57,6 +76,9 @@ def set_new_item(value: int):
     key = str(uuid.uuid4())
     value = msgpack.encode(StockValue(stock=0, price=int(value), last_upd='admin'))
     try:
+        db.set(key, value)
+    except redis.exceptions.ConnectionError:
+        retry_connection()
         db.set(key, value)
     except redis.exceptions.RedisError:
         raise RedisDBError
@@ -71,6 +93,9 @@ def set_users(n: int, starting_stock: int, item_price: int, item_upd: str = 'adm
                                   for i in range(n)}
     try:
         db.mset(kv_pairs)
+    except redis.exceptions.ConnectionError:
+        retry_connection()
+        db.mset(kv_pairs)
     except redis.exceptions.RedisError:
         raise RedisDBError
     
@@ -82,6 +107,9 @@ def add_amount(item_id: str, amount: int, item_upd: str = 'api'):
     item_entry.stock += int(amount)
     item_entry.last_upd =  set_updated_str(item_entry.last_upd, item_upd)
     try:
+        db.set(item_id, msgpack.encode(item_entry))
+    except redis.exceptions.ConnectionError:
+        retry_connection()
         db.set(item_id, msgpack.encode(item_entry))
     except redis.exceptions.RedisError:
         raise RedisDBError
@@ -96,6 +124,9 @@ def remove_amount(item_id: str, amount: int, item_upd: str = 'api'):
     try:
         item_entry.last_upd = set_updated_str(item_entry.last_upd, item_upd)
         db.set(item_id, msgpack.encode(item_entry))
+    except redis.exceptions.ConnectionError:
+        retry_connection()
+        db.set(item_id, msgpack.encode(item_entry))
     except redis.exceptions.RedisError:
         raise RedisDBError
     return item_entry.stock
@@ -106,7 +137,6 @@ def add_amount_bulk(message: dict):
     items = get_item_bulk(item_ids)
     stocks_upd = dict()
     for i in range(len(items)):
-
         item : StockValue | None = msgpack.decode(items[i], type=StockValue) if items[i] else None
         item.stock += int(message[item_ids[i]])
         items[i] = item
@@ -117,6 +147,9 @@ def add_amount_bulk(message: dict):
                        last_upd=set_updated_str(items[i].last_upd, "")
                       ))
     try:
+        db.mset(stocks_upd)
+    except redis.exceptions.ConnectionError:
+        retry_connection()
         db.mset(stocks_upd)
     except redis.exceptions.RedisError:
         raise RedisDBError
@@ -147,53 +180,9 @@ def remove_amount_bulk(stock_remove: dict, order_id: str):
                            ))
     try:
         db.mset(stocks_upd)
+    except redis.exceptions.ConnectionError:
+        retry_connection()
+        db.mset(stocks_upd)
     except redis.exceptions.RedisError:
         raise RedisDBError
 
-
-# def stock_command_event_processor(message: IncomingMessage):
-#     async with message.process(ignore_processed=True):
-#         command = message.headers.get('COMMAND')
-#         client = message.headers.get('CLIENT')
-
-#         stock_order = json.loads(str(message.body.decode('utf-8')))
-#         response_obj: AMQPMessage = None
-
-#         if client == 'ORDER_REQUEST_ORCHESTRATOR' and command == 'STOCK_ADD':
-#             reply_state="SUCCESSFUL"
-#             try:
-#                 await add_amount_bulk(stock_order)  
-#             except RedisDBError:
-#                 reply_state="UNSUCCESSFUL"
-#             except ItemNotFoundError:
-#                 reply_state="UNSUCCESSFUL"
-#             await message.ack()
-#             response_obj = AMQPMessage(
-#                 id=message.correlation_id,
-#                 reply_state=reply_state
-#             )
-
-#         if client == 'ORDER_REQUEST_ORCHESTRATOR' and command == 'STOCK_SUBTRACT':
-#             reply_state = "SUCCESSFUL"
-#             try:
-#                 await remove_amount_bulk(stock_order)
-#             except RedisDBError:
-#                 reply_state="UNSUCCESSFUL"
-#             except InsufficientStockError:
-#                 reply_state = "UNSUCCESSFUL"
-#             await message.ack()
-#             response_obj = AMQPMessage(
-#                 id=message.correlation_id,
-#                 reply_state=reply_state
-#             )
-
-#         assert response_obj is not None
-
-#         amqp_client: AMQPClient = await AMQPClient().init()
-#         await amqp_client.event_producer(
-#             'STOCK_EVENT_STORE',
-#             message.reply_to,
-#             message.correlation_id,
-#             response_obj
-#         )
-#         await amqp_client.connection.close()

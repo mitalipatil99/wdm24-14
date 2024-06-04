@@ -1,33 +1,49 @@
 import redis
+import time
 import os
 import json
 import atexit
 import uuid
+from msgspec import msgpack
+from config import *
 
-from aio_pika import IncomingMessage
-from msgspec import msgpack, Struct
-
-from model import AMQPMessage
+from model import UserValue
 from exceptions import RedisDBError, InsufficientCreditError
 
-db: redis.Redis = redis.Redis(host=os.environ['REDIS_HOST'],
+def connect_redis():
+    db_conn: redis.Redis = redis.Redis(host=os.environ['REDIS_HOST'],
                               port=int(os.environ['REDIS_PORT']),
                               password=os.environ['REDIS_PASSWORD'],
                               db=int(os.environ['REDIS_DB']))
+    return db_conn
+
+def retry_connection():
+    global db 
+    for attempt in range(1, MAX_RETRIES):
+        try: 
+            db = connect_redis()
+            db.ping()
+        except redis.exceptions.ConnectionError:
+            if attempt < MAX_RETRIES:
+                time.sleep(SLEEP_TIME)
+            else:
+                raise RedisDBError
+                
 
 def close_db_connection():
     db.close()
 
-atexit.register(close_db_connection)
 
-class UserValue(Struct):
-    credit: int
-    last_upd: str
+db = connect_redis()
+atexit.register(close_db_connection)
 
 
 def get_user_db(user_id: str) -> UserValue | None:
     try:
         # get serialized data
+        entry: bytes = db.get(user_id)
+    except redis.exceptions.ConnectionError:
+        retry_connection()
         entry: bytes = db.get(user_id)
     except redis.exceptions.RedisError:
         raise RedisDBError(Exception)
@@ -39,6 +55,9 @@ def create_user_db():
     key = str(uuid.uuid4())
     value = msgpack.encode(UserValue(credit=0, last_upd="admin"))
     try:
+        db.set(key, value)
+    except redis.exceptions.ConnectionError:
+        retry_connection()
         db.set(key, value)
     except redis.exceptions.RedisError:
         raise RedisDBError(Exception)
@@ -52,6 +71,9 @@ def batch_init_db(n: int, starting_money: int):
                                   for i in range(n)}
     try:
         db.mset(kv_pairs)
+    except redis.exceptions.ConnectionError:
+        retry_connection()
+        db.mset(kv_pairs)
     except redis.exceptions.RedisError:
         raise RedisDBError(Exception)
 
@@ -62,6 +84,9 @@ def add_credit_db(user_id: str, amount: int, user_upd: str = "api") -> UserValue
     user_entry.credit += int(amount)
     user_entry.last_upd = user_upd
     try:
+        db.set(user_id, msgpack.encode(user_entry))
+    except redis.exceptions.ConnectionError:
+        retry_connection()
         db.set(user_id, msgpack.encode(user_entry))
     except redis.exceptions.RedisError:
         raise RedisDBError(Exception)
@@ -77,58 +102,9 @@ def remove_credit_db(user_id: str, amount: int, user_upd: str = "api"):
     try:
         user_entry.last_upd = user_upd
         db.set(user_id, msgpack.encode(user_entry))
+    except redis.exceptions.ConnectionError:
+        retry_connection()
+        db.set(user_id, msgpack.encode(user_entry))
     except redis.exceptions.RedisError:
         raise RedisDBError(Exception)  
     return user_entry
-
-
-def payment_event_processor(message: IncomingMessage):
-     with message.process():
-        command = message.headers.get('COMMAND')
-        client = message.headers.get('CLIENT')
-
-        payment_message = json.loads(str(message.body.decode('utf-8')))
-        response_obj: AMQPMessage = None
-        if client == 'ORDER_REQUEST_ORCHESTRATOR' and command == 'PAYMENT_DEDUCT':
-            try:
-                remove_credit_db(payment_message['data'].get('user_id'), payment_message['data'].get('total_cost'), payment_message.get('key'))
-                funds_available = True
-            except InsufficientCreditError:
-                funds_available = False
-            except RedisDBError:
-                #TODO: To be replaced by timeout? Or check types of error and then 
-                funds_available = False
-
-            message.ack()
-            response_obj = AMQPMessage(
-                id=message.correlation_id,
-                content=None,
-                reply_state=('PAYMENT_UNSUCCESSFUL','PAYMENT_SUCCESSFUL')[funds_available]
-            )
-
-        if client == 'ORDER_REQUEST_ORCHESTRATOR' and command == 'PAYMENT_ADD':
-            try:
-                add_credit_db(payment_message['data'].get('user_id'), payment_message['data'].get('total_cost'), payment_message.get('key'))
-                refund_success = True
-            except RedisDBError:
-                refund_success = False
-            
-            message.ack()
-            response_obj = AMQPMessage(
-                id=message.correlation_id,
-                content=None,
-                reply_state=('PAYMENT_UNSUCCESSFUL','PAYMENT_SUCCESSFUL')[refund_success]
-            )
-
-        # There must be a response object to signal orchestrator of
-        # the outcome of the request.
-        assert response_obj is not None
-
-        amqp_client: AMQPClient = AMQPClient().init()
-        amqp_client.event_producer(
-            'ORDER_TX_EVENT_STORE',
-            message.reply_to,
-            message.correlation_id,
-            response_obj
-        )
-        amqp_client.connection.close()

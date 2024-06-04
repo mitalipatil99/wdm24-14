@@ -1,7 +1,7 @@
-from typing import Any
-from pydantic import BaseModel
+from msgspec import Struct
 
-class AMQPMessage(BaseModel):
-    id: str
-    content: Any | None = None
-    reply_state: str | None = None
+class OrderValue(Struct):
+    paid: bool
+    items: list[tuple[str, int]]
+    user_id: str
+    total_cost: int

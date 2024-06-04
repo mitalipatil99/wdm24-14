@@ -1,7 +1,5 @@
-from typing import Any
-from pydantic import BaseModel
+from msgspec import Struct
 
-class AMQPMessage(BaseModel):
-    id: str
-    content: Any | None = None
-    reply_state: str | None = None
+class UserValue(Struct):
+    credit: int
+    last_upd: str

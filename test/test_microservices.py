@@ -40,6 +40,7 @@ class TestMicroservices(unittest.TestCase):
         self.assertIn('user_id', user)
 
         user_id: str = user['user_id']
+        # user_id: str = "925ff1cd-810c-4433-a913-4518211d68a0"
 
         # Test /users/credit/add/<user_id>/<amount>
         add_credit_response = tu.add_credit_to_user(user_id, 15)
