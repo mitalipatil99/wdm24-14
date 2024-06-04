@@ -2,9 +2,10 @@ import pika
 from services import set_new_item, set_users, get_item, add_amount, remove_amount, remove_amount_bulk, add_amount_bulk
 from msgspec import msgpack
 import os
-from exceptions import ItemNotFoundError, RedisDBError, InsufficientStockError
+from exceptions import ItemNotFoundError, RedisDBError, InsufficientStockError, RabbitMQError
 from config import *
 import logging
+import time
 
 def generate_response(status, data={}):
     return {"status":status, "data":data}
@@ -30,7 +31,7 @@ class RabbitMQConsumer:
             self.channel = channel
             self.declare_queues()
         except Exception as e:
-            print(e)
+            raise RabbitMQError
 
     def __init__(self) -> None:
         self.channel = None
@@ -110,9 +111,10 @@ class RabbitMQConsumer:
         self.channel.basic_qos(prefetch_count=1)
         self.channel.basic_consume(queue=STOCK_QUEUE, on_message_callback=self.callback)
         try:
+            self.logger.info("Starting conumer...")
             self.channel.start_consuming()
         except Exception as e:
-            print(e)
+            raise RabbitMQError
 
     def publish_message(self, properties, response):
         self.logger.info(f"[{properties.reply_to}] Response: {response}")
@@ -127,5 +129,9 @@ class RabbitMQConsumer:
 
 if __name__ == "__main__":
     consumer = RabbitMQConsumer()
-    consumer.connect()
-    consumer.start_consuming()
+    while True:
+        try:
+            consumer.connect()
+            consumer.start_consuming()
+        except Exception:
+            time.sleep(5)

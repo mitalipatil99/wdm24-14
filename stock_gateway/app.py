@@ -7,45 +7,73 @@ from msgspec import msgpack, Struct
 from flask import Flask, jsonify, abort, Response, request
 from datetime import datetime
 from config import *
-
+import time
 DB_ERROR_STR = "DB error"
 
 app = Flask("stock-gateway")
 
 
 class RabbitMQClient:
-    def __init__(self):
+
+    def connect(self):
+        app.logger.info("Connecting to broker...")
         self.connection = pika.BlockingConnection(pika.URLParameters(os.environ['RABBITMQ_BROKER_URL']))
         self.channel = self.connection.channel()
+        self.channel.queue_declare(queue=ORDER_QUEUE)
         self.channel.queue_declare(queue=STOCK_QUEUE)
+        self.channel.queue_declare(queue=PAYMENT_QUEUE)
 
-    def call(self, message):
-        corr_id = str(uuid.uuid4())
-        response_queue = self.channel.queue_declare(queue='', exclusive=True).method.queue
+    def __init__(self):
+        self.connect()
 
-        def on_response(ch, method, props, body):
-            if corr_id == props.correlation_id:
-                ch.basic_ack(delivery_tag=method.delivery_tag)
-                self.response = msgpack.decode(body)
-                ch.stop_consuming()
 
-        self.channel.basic_consume(queue=response_queue, on_message_callback=on_response, auto_ack=False)
-        self.response = None
-        self.channel.basic_publish(
-            exchange='',
-            routing_key=STOCK_QUEUE,
-            properties=pika.BasicProperties(
-                reply_to=response_queue,
-                correlation_id=corr_id,
-            ),
-            body=msgpack.encode(message)
-        )
+    def call(self, message, queue, is_message_sent = False, retry_queue = None, retry_corr_id = None):
+        corr_id = None
+        response_queue = None
+        try:
+            if is_message_sent:
+                corr_id = retry_corr_id
+                response_queue = retry_queue
+            else:
+                corr_id = str(uuid.uuid4())
+                response_queue = self.channel.queue_declare(queue='', exclusive=True).method.queue
+            
+            def on_response(ch, method, props, body):
+                if corr_id == props.correlation_id:
+                    ch.basic_ack(delivery_tag=method.delivery_tag)
+                    self.response = msgpack.decode(body)
+                    ch.stop_consuming()
 
-        while self.response is None:
-            self.connection.process_data_events(time_limit=None)
+            self.channel.basic_consume(queue=response_queue, on_message_callback=on_response, auto_ack=False)
+            self.response = None
+            if not is_message_sent:
+                self.channel.basic_publish(
+                    exchange='',
+                    routing_key=queue,
+                    properties=pika.BasicProperties(
+                        reply_to=response_queue,
+                        correlation_id=corr_id,
+                    ),
+                    body=msgpack.encode(message)
+                )
+                is_message_sent = True
 
-        return self.response
+            while self.response is None:
+                self.connection.process_data_events(time_limit=None)
 
+            return self.response
+        except Exception as e:
+            app.logger.error(e)
+            while True:
+                try:
+                    self.connect()
+                    if is_message_sent:
+                        return self.call(message, queue, is_message_sent, response_queue, corr_id)
+                    else:
+                        return self.call(message, queue)
+                except Exception as e:
+                    time.sleep(5)
+                    app.logger.error("Reconnecting...")
 
 rabbitmq_client = RabbitMQClient()
 
@@ -83,11 +111,13 @@ def threaded(fn):
         thread.start()
         response = thread.join()
         app.logger.info(f"Response: {response}")
-        if response['status'] == STATUS_SUCCESS:
-            return jsonify(response['data'])
+        if response is not None:
+            if response['status'] == STATUS_SUCCESS:
+                return jsonify(response['data'])
+            else:
+                return abort(response['status'], response['data'] )
         else:
-            return abort(response['status'], response['data'] )
-
+            return abort(500, SERV_ERROR_STR)
     wrapper.__name__ = f"{fn.__name__}_wrapper"
     return wrapper
 
@@ -95,7 +125,7 @@ def threaded(fn):
 @app.post('/item/create/<price>')
 @threaded
 def create_item(price: int):
-    response = rabbitmq_client.call({'action': 'create_item', 'price': price})
+    response = rabbitmq_client.call({'action': 'create_item', 'price': price}, STOCK_QUEUE)
     return response
 
 
@@ -103,28 +133,28 @@ def create_item(price: int):
 @threaded
 def batch_init_users(n: int, starting_stock: int, item_price: int):
     response = rabbitmq_client.call(
-        {'action': 'batch_init', 'n': n, 'starting_stock': starting_stock, 'item_price': item_price})
+        {'action': 'batch_init', 'n': n, 'starting_stock': starting_stock, 'item_price': item_price}, STOCK_QUEUE)
     return response
 
 
 @app.get('/find/<item_id>')
 @threaded
 def find_item(item_id: str):
-    response = rabbitmq_client.call({'action': 'find_item', 'item_id': item_id})
+    response = rabbitmq_client.call({'action': 'find_item', 'item_id': item_id}, STOCK_QUEUE)
     return response
 
 
 @app.post('/add/<item_id>/<amount>')
 @threaded
 def add_stock(item_id: str, amount: int):
-    response = rabbitmq_client.call({'action': 'add_stock', 'item_id': item_id, 'amount': amount})
+    response = rabbitmq_client.call({'action': 'add_stock', 'item_id': item_id, 'amount': amount}, STOCK_QUEUE)
     return response
 
 
 @app.post('/subtract/<item_id>/<amount>')
 @threaded
 def remove_stock(item_id: str, amount: int):
-    response = rabbitmq_client.call({'action': 'remove_stock', 'item_id': item_id, 'amount': amount})
+    response = rabbitmq_client.call({'action': 'remove_stock', 'item_id': item_id, 'amount': amount}, STOCK_QUEUE)
     return response
 
 
