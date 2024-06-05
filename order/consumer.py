@@ -1,7 +1,8 @@
 import pika
+import time
 from msgspec import msgpack
 import os
-from exceptions import RedisDBError, InsufficientCreditError
+from exceptions import RedisDBError, InsufficientCreditError, RabbitMQError
 from services import create_order_db, get_order_by_id_db, batch_init_users_db, add_item_db, confirm_order
 from config import *
 import logging
@@ -30,7 +31,7 @@ class RabbitMQConsumer:
             self.channel = channel
             self.declare_queues()
         except Exception as e:
-            print(e)
+            raise RabbitMQError
 
     def __init__(self) -> None:
         self.channel = None
@@ -85,10 +86,12 @@ class RabbitMQConsumer:
     def start_consuming(self):
         self.channel.basic_qos(prefetch_count=1)
         self.channel.basic_consume(queue=ORDER_QUEUE, on_message_callback=self.callback)
-        try:
+        try:   
+            self.logger.info("Starting conumer...")
             self.channel.start_consuming()
         except Exception as e:
-            print(e)
+            raise RabbitMQError
+        
 
     def publish_message(self, properties, response):
         self.logger.info(f"[{properties.reply_to}] Response: {response}")
@@ -104,5 +107,11 @@ class RabbitMQConsumer:
 
 if __name__ == "__main__":
     consumer = RabbitMQConsumer()
-    consumer.connect()
-    consumer.start_consuming()
+    while True:
+        try:
+            consumer.connect()
+            consumer.start_consuming()
+        except RabbitMQError:
+            time.sleep(5)
+        
+            

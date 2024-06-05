@@ -1,11 +1,12 @@
 import pika
 from msgspec import msgpack
 
-from exceptions import RedisDBError, InsufficientCreditError
+from exceptions import RedisDBError, InsufficientCreditError, RabbitMQError
 from services import create_user_db, batch_init_db, get_user_db, add_credit_db, remove_credit_db
 from config import *
 import os
 import logging
+import time
 
 def generate_response(status, data={}):
     return {"status":status, "data":data}
@@ -32,7 +33,7 @@ class RabbitMQConsumer:
             self.channel = channel
             self.declare_queues()
         except Exception as e:
-            print(e)
+            raise RabbitMQError
 
     def __init__(self) -> None:
         self.channel = None
@@ -91,9 +92,10 @@ class RabbitMQConsumer:
         self.channel.basic_consume(queue=PAYMENT_QUEUE, on_message_callback=self.callback)
 
         try:
+            self.logger.info("Starting conumer...")
             self.channel.start_consuming()
         except Exception as e:
-            print(e)
+           raise RabbitMQError
 
     def publish_message(self, properties, response):
         self.logger.info(f"[{properties.reply_to}] Response: {response}")
@@ -109,5 +111,9 @@ class RabbitMQConsumer:
 
 if __name__ == "__main__":
     consumer = RabbitMQConsumer()
-    consumer.connect()
-    consumer.start_consuming()
+    while True:
+        try:
+            consumer.connect()
+            consumer.start_consuming()
+        except RabbitMQError:
+            time.sleep(5)

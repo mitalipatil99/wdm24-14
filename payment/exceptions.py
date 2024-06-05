@@ -3,3 +3,6 @@ class RedisDBError(Exception):
 
 class InsufficientCreditError(Exception):
     pass
+
+class RabbitMQError(Exception):
+    pass
