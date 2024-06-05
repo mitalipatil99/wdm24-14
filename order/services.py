@@ -70,21 +70,25 @@ def batch_init_users_db(kv_pairs):
     except redis.exceptions.RedisError:
         raise RedisDBError(Exception)
     
-def add_item_db(order_id, order_entry):
-    try:
-        db.set(order_id, msgpack.encode(order_entry))
-    except redis.exceptions.ConnectionError:
-        retry_connection()
-        db.set(order_id, msgpack.encode(order_entry))
-    except redis.exceptions.RedisError:
-        raise RedisDBError(Exception)
+def add_item_db(order_id, order_entry, new_upd):
+    order = get_order_by_id_db(order_id)
+    if order.last_upd != new_upd:
+        try:
+            db.set(order_id, msgpack.encode(order_entry))
+        except redis.exceptions.ConnectionError:
+            retry_connection()
+            db.set(order_id, msgpack.encode(order_entry))
+        except redis.exceptions.RedisError:
+            raise RedisDBError(Exception)
     
 
-def confirm_order(order_id, order_entry):
-    try:
-        db.set(order_id, msgpack.encode(order_entry))   
-    except redis.exceptions.ConnectionError:
-        retry_connection()
-        db.set(order_id, msgpack.encode(order_entry))
-    except redis.exceptions.RedisError:
-        raise RedisDBError(Exception)
+def confirm_order(order_id, order_entry, new_upd):
+    order = get_order_by_id_db(order_id)
+    if order.last_upd != new_upd:
+        try:
+            db.set(order_id, msgpack.encode(order_entry))   
+        except redis.exceptions.ConnectionError:
+            retry_connection()
+            db.set(order_id, msgpack.encode(order_entry))
+        except redis.exceptions.RedisError:
+            raise RedisDBError(Exception)

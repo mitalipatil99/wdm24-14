@@ -62,14 +62,14 @@ class RabbitMQConsumer:
                 self.publish_message(properties, generate_response(STATUS_SUCCESS, {"msg": "Batch init for orders successful"}))
 
             elif msg['action'] == "add_item":
-                add_item_db(msg['order_id'], msg['order_entry'])
+                add_item_db(msg['order_id'], msg['order_entry'],properties.correlation_id)
                 response = {
                     "order_id": msg['order_id'],
                 }
                 self.publish_message(properties, generate_response(STATUS_SUCCESS, response))
 
             elif msg['action'] == "confirm_order":
-                confirm_order(msg['order_id'], msg['order_entry'])
+                confirm_order(msg['order_id'], msg['order_entry'],properties.correlation_id)
                 self.publish_message(properties, generate_response(STATUS_SUCCESS, "Checkout successful"))
 
 

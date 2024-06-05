@@ -108,32 +108,33 @@ def set_users(n: int, starting_stock: int, item_price: int, item_upd: str = 'adm
 
 def add_amount(item_id: str, amount: int, new_upd: str):
     item_entry: StockValue =  get_item(item_id)
-    # update stock, serialize and update database
-    item_entry.stock += int(amount)
-    item_entry.last_upd =  set_updated_str(item_entry.last_upd, new_upd)
-    try:
-        db.set(item_id, msgpack.encode(item_entry))
-    except redis.exceptions.ConnectionError:
-        retry_connection()
-        db.set(item_id, msgpack.encode(item_entry))
-    except redis.exceptions.RedisError:
-        raise RedisDBError
+    if not is_duplicate_operation(item_entry.last_upd, new_upd):
+        item_entry.stock += int(amount)
+        item_entry.last_upd =  set_updated_str(item_entry.last_upd, new_upd)
+        try:
+            db.set(item_id, msgpack.encode(item_entry))
+        except redis.exceptions.ConnectionError:
+            retry_connection()
+            db.set(item_id, msgpack.encode(item_entry))
+        except redis.exceptions.RedisError:
+            raise RedisDBError
     return item_entry.stock
 
 
 def remove_amount(item_id: str, amount: int, new_upd: str):
     item_entry: StockValue = get_item(item_id)
-    item_entry.stock -= int(amount)
-    if item_entry.stock < 0:
-        raise InsufficientStockError
-    try:
-        item_entry.last_upd = set_updated_str(item_entry.last_upd, new_upd)
-        db.set(item_id, msgpack.encode(item_entry))
-    except redis.exceptions.ConnectionError:
-        retry_connection()
-        db.set(item_id, msgpack.encode(item_entry))
-    except redis.exceptions.RedisError:
-        raise RedisDBError
+    if not is_duplicate_operation(item_entry.last_upd, new_upd):
+        item_entry.stock -= int(amount)
+        if item_entry.stock < 0:
+            raise InsufficientStockError
+        try:
+            item_entry.last_upd = set_updated_str(item_entry.last_upd, new_upd)
+            db.set(item_id, msgpack.encode(item_entry))
+        except redis.exceptions.ConnectionError:
+            retry_connection()
+            db.set(item_id, msgpack.encode(item_entry))
+        except redis.exceptions.RedisError:
+            raise RedisDBError
     return item_entry.stock
 
 
