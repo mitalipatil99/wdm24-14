@@ -40,7 +40,6 @@ class RabbitMQConsumer:
     def callback(self, ch, method, properties, body):
         msg = msgpack.decode(body)
         self.logger.info(f"[{properties.reply_to}] : {msg}")
-        ch.basic_ack(delivery_tag=method.delivery_tag)  
         try:
             if msg['action'] == "create_item":
                 key = set_new_item(msg['price'])
@@ -105,6 +104,7 @@ class RabbitMQConsumer:
         except Exception as e:
             self.logger.error(f"[{properties.reply_to}] { msg['action']} : {msg} {e}")
             self.publish_message(properties, generate_response(STATUS_SERVER_ERROR, SERV_ERROR_STR) )
+        ch.basic_ack(delivery_tag=method.delivery_tag)
 
 
     def start_consuming(self):
