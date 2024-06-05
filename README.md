@@ -1,7 +1,7 @@
 ## Project:
 This project contains a set of microservices that need to coordinate in order to guarantee data consistency. We have used reactive microservices pattern using multithreading and RabbitMQ for loosely coupled and single responsibility principles. When a message is received by the system, it is received by one of the three gateways (order, payment, or stock gateway) which publish the message to the order, payment, and stock queue respectively. These messages are consumed by the relevant consumer and updates are made to the database. An appropriate response is published to the reply queue which is consumed by the gateway. 
 
-![Alt text](images/WSDM-architecture-diagram.png "Architecture Diagram")
+![Alt text](images/WSDM-architecture-diagram.jpg "Architecture Diagram")
 
 For fault tolerance and eventual consistency, the following has been implemented:
 - In case of DB failure, a retry and timeout mechanism has been implemented.
