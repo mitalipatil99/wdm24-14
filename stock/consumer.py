@@ -2,7 +2,7 @@ import pika
 from services import set_new_item, set_users, get_item, add_amount, remove_amount, remove_amount_bulk, add_amount_bulk
 from msgspec import msgpack
 import os
-from exceptions import ItemNotFoundError, RedisDBError, InsufficientStockError
+from exceptions import *
 from config import *
 import logging
 
@@ -15,7 +15,7 @@ class RabbitMQConsumer:
         self.channel.queue_declare(STOCK_QUEUE)
 
     def setup_logger(self):
-        self.logger = logging.getLogger("OrderService")
+        self.logger = logging.getLogger("StockService")
         self.logger.setLevel(logging.INFO)
         handler = logging.StreamHandler()
         handler.setLevel(logging.INFO)
@@ -54,7 +54,8 @@ class RabbitMQConsumer:
                 item_entry = get_item(msg['item_id'])
                 data = {
                     "stock": item_entry.stock,
-                    "price": item_entry.price
+                    "price": item_entry.price,
+                    "last_upd": item_entry.last_upd
                 }
                 self.publish_message(properties, generate_response(STATUS_SUCCESS, data))
 
@@ -88,9 +89,8 @@ class RabbitMQConsumer:
 
 
             elif msg['action'] == "add_stock_bulk":
-                add_amount_bulk(msg['data'])
+                add_amount_bulk(msg['data'], msg['order_id'])
                 self.publish_message(properties, generate_response(STATUS_SUCCESS))
-
 
         except RedisDBError as e:
             self.logger.error(f"[{properties.reply_to}] { msg['action']} : {msg} {e}")

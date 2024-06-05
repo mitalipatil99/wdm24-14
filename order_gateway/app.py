@@ -171,6 +171,7 @@ def add_item(order_id: str, item_id: str, quantity: int):
 @app.post('/checkout/<order_id>')
 @threaded
 def checkout(order_id: str):
+    # TODO: While fetching order details check if paid, check if success already
     app.logger.debug(f"Checking out {order_id}")
     order_details = rabbitmq_client.call({'action': 'find_order','order_id':order_id}, ORDER_QUEUE)
     if order_details['status']!= 200:
@@ -192,7 +193,7 @@ def checkout(order_id: str):
         # Fix response
         if payment_sub_response['status'] == 500:
             payment_add_response = rabbitmq_client.call({'action': 'add_funds','user_id':order_details['user_id'], 'amount': order_details['total_cost']}, PAYMENT_QUEUE)
-        stock_add_response = rabbitmq_client.call({'action':'add_stock_bulk', 'data':item_data}, STOCK_QUEUE)
+        stock_add_response = rabbitmq_client.call({'action':'add_stock_bulk', 'data':item_data, 'order_id': order_id}, STOCK_QUEUE)
         return payment_sub_response
     order_details['paid'] = True
     confirm_order_response = rabbitmq_client.call({'action':'confirm_order', 'order_id': order_id, 'order_entry': order_details}, ORDER_QUEUE)

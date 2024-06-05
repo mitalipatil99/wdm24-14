@@ -27,6 +27,7 @@ services:
       - payment-service
       - payment-gateway
       - order-gateway
+      - stock-service
 
     
   order-gateway:

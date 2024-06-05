@@ -17,7 +17,7 @@ class RabbitMQConsumer:
         self.channel.queue_declare(PAYMENT_QUEUE)
 
     def setup_logger(self):
-        self.logger = logging.getLogger("OrderService")
+        self.logger = logging.getLogger("PaymentService")
         self.logger.setLevel(logging.INFO)
         handler = logging.StreamHandler()
         handler.setLevel(logging.INFO)
