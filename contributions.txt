@@ -1,0 +1,9 @@
+Contributions:
+
+- Smruti: Fault-tolerance and idempotency, Redis DB updates
+
+- Amit: Architecture and RabbitMQ
+
+- Mitali: Architecture and RabbitMQ
+
+- Esha: Redis DB updates, Documentation, Diagram, Testing, Cookies :)
