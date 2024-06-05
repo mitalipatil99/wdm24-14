@@ -9,17 +9,19 @@ from config import *
 from model import StockValue
 from exceptions import RedisDBError, ItemNotFoundError, InsufficientStockError
 
+
 def connect_redis():
     db_conn: redis.Redis = redis.Redis(host=os.environ['REDIS_HOST'],
-                              port=int(os.environ['REDIS_PORT']),
-                              password=os.environ['REDIS_PASSWORD'],
-                              db=int(os.environ['REDIS_DB']))
+                                       port=int(os.environ['REDIS_PORT']),
+                                       password=os.environ['REDIS_PASSWORD'],
+                                       db=int(os.environ['REDIS_DB']))
     return db_conn
 
+
 def retry_connection():
-    global db 
+    global db
     for attempt in range(1, MAX_RETRIES):
-        try: 
+        try:
             db = connect_redis()
             db.ping()
         except redis.exceptions.ConnectionError:
@@ -27,7 +29,7 @@ def retry_connection():
                 time.sleep(SLEEP_TIME)
             else:
                 raise RedisDBError
-                
+
 
 def close_db_connection():
     db.close()
@@ -89,13 +91,15 @@ def set_new_item(value: int):
         raise RedisDBError
     return key
 
+
 # Check functionality: We are setting same price and stock amount for each item??
 def set_users(n: int, starting_stock: int, item_price: int, item_upd: str = 'admin_add'):
     n = int(n)
     starting_stock = int(starting_stock)
     item_price = int(item_price)
-    kv_pairs: dict[str, bytes] = {f"{i}": msgpack.encode(StockValue(stock=starting_stock, price=item_price, last_upd=item_upd))
-                                  for i in range(n)}
+    kv_pairs: dict[str, bytes] = {
+        f"{i}": msgpack.encode(StockValue(stock=starting_stock, price=item_price, last_upd=item_upd))
+        for i in range(n)}
     try:
         db.mset(kv_pairs)
     except redis.exceptions.ConnectionError:
@@ -103,14 +107,13 @@ def set_users(n: int, starting_stock: int, item_price: int, item_upd: str = 'adm
         db.mset(kv_pairs)
     except redis.exceptions.RedisError:
         raise RedisDBError
-    
 
 
 def add_amount(item_id: str, amount: int, new_upd: str):
-    item_entry: StockValue =  get_item(item_id)
+    item_entry: StockValue = get_item(item_id)
     if not is_duplicate_operation(item_entry.last_upd, new_upd):
         item_entry.stock += int(amount)
-        item_entry.last_upd =  set_updated_str(item_entry.last_upd, new_upd)
+        item_entry.last_upd = set_updated_str(item_entry.last_upd, new_upd)
         try:
             db.set(item_id, msgpack.encode(item_entry))
         except redis.exceptions.ConnectionError:
@@ -144,16 +147,16 @@ def add_amount_bulk(message: dict, new_upd: str):
     stocks_upd = dict()
     retry_flag = False
     for i in range(len(items)):
-        item : StockValue | None = msgpack.decode(items[i], type=StockValue) if items[i] else None
+        item: StockValue | None = msgpack.decode(items[i], type=StockValue) if items[i] else None
         if is_duplicate_operation(item.last_upd, new_upd):
             retry_flag = True
             break
         item.stock += int(message[item_ids[i]])
         stocks_upd[item_ids[i]] = msgpack.encode(
-            StockValue(stock=item.stock, 
-                    price=item.price, 
-                    last_upd=set_updated_str(item.last_upd, new_upd)))
-    if not retry_flag:    
+            StockValue(stock=item.stock,
+                       price=item.price,
+                       last_upd=set_updated_str(item.last_upd, new_upd)))
+    if not retry_flag:
         try:
             db.mset(stocks_upd)
         except redis.exceptions.ConnectionError:
@@ -169,7 +172,7 @@ def remove_amount_bulk(stock_remove: dict, new_upd: str):
     stocks_upd = dict()
     retry_flag = False
     for i in range(len(items)):
-        item : StockValue | None = msgpack.decode(items[i], type=StockValue) if items[i] else None
+        item: StockValue | None = msgpack.decode(items[i], type=StockValue) if items[i] else None
         if is_duplicate_operation(item.last_upd, new_upd):
             retry_flag = True
             break
@@ -177,8 +180,8 @@ def remove_amount_bulk(stock_remove: dict, new_upd: str):
         if item.stock < 0:
             raise InsufficientStockError
         stocks_upd[item_ids[i]] = msgpack.encode(
-            StockValue(stock=item.stock, 
-                       price=item.price, 
+            StockValue(stock=item.stock,
+                       price=item.price,
                        last_upd=set_updated_str(item.last_upd, new_upd)))
     if not retry_flag:
         try:
