@@ -63,7 +63,7 @@ class RabbitMQConsumer:
 
 
             elif msg['action'] == "add_stock":
-                new_stock = add_amount(msg['item_id'], msg['amount'])
+                new_stock = add_amount(msg['item_id'], msg['amount'], properties.correlation_id)
                 response = {
                     "item_id": msg['item_id'],
                     "stock": new_stock
@@ -73,7 +73,7 @@ class RabbitMQConsumer:
 
 
             elif msg['action'] == "remove_stock":
-                new_stock = remove_amount(msg['item_id'], msg['amount'])
+                new_stock = remove_amount(msg['item_id'], msg['amount'], properties.correlation_id)
                 response = {
                     "item_id": msg['item_id'],
                     "stock": new_stock
@@ -82,7 +82,7 @@ class RabbitMQConsumer:
 
 
             elif msg['action'] == "remove_stock_bulk":
-                remove_amount_bulk(msg['data'], msg['order_id'])
+                remove_amount_bulk(msg['data'], properties.correlation_id)
                 response = {
                     "order_id": msg['order_id'],
                 }
@@ -90,7 +90,7 @@ class RabbitMQConsumer:
 
 
             elif msg['action'] == "add_stock_bulk":
-                add_amount_bulk(msg['data'], msg['order_id'])
+                add_amount_bulk(msg['data'], properties.correlation_id)
                 self.publish_message(properties, generate_response(STATUS_SUCCESS))
 
         except RedisDBError as e:

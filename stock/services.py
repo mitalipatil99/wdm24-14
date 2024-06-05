@@ -37,23 +37,17 @@ db = connect_redis()
 atexit.register(close_db_connection)
 
 
-def set_updated_str(last_upd_str: str, new_upd: str, upd_op: str):
+def set_updated_str(last_upd_str: str, new_upd: str):
     if len(last_upd_str.split(',')) < LAST_UPD_LIMIT:
-        return f"{last_upd_str},{new_upd}_{upd_op}"
+        return f"{last_upd_str},{new_upd}"
     else:
         last_upd_str = ','.join(last_upd_str.split(',')[1:])
-        return f"{last_upd_str},{new_upd}_{upd_op}"
+        return f"{last_upd_str},{new_upd}"
 
 
-def is_duplicate_operation(last_upd_str: str, new_upd: str, upd_op: str):
-    updates = last_upd_str.split(',')
-    order_id_ops = [s for s in updates if new_upd in s]
-    if order_id_ops:
-        last_op = order_id_ops[-1].split('_')[1]
-        if last_op == upd_op:
-            return True
-        else:
-            return False
+def is_duplicate_operation(last_upd_str: str, new_upd: str):
+    if new_upd in last_upd_str:
+        return True
     else:
         return False
 
@@ -112,11 +106,11 @@ def set_users(n: int, starting_stock: int, item_price: int, item_upd: str = 'adm
     
 
 
-def add_amount(item_id: str, amount: int, item_upd: str = 'api'):
+def add_amount(item_id: str, amount: int, new_upd: str):
     item_entry: StockValue =  get_item(item_id)
     # update stock, serialize and update database
     item_entry.stock += int(amount)
-    item_entry.last_upd =  set_updated_str(item_entry.last_upd, item_upd, upd_op="add")
+    item_entry.last_upd =  set_updated_str(item_entry.last_upd, new_upd)
     try:
         db.set(item_id, msgpack.encode(item_entry))
     except redis.exceptions.ConnectionError:
@@ -127,13 +121,13 @@ def add_amount(item_id: str, amount: int, item_upd: str = 'api'):
     return item_entry.stock
 
 
-def remove_amount(item_id: str, amount: int, item_upd: str = 'api'):
+def remove_amount(item_id: str, amount: int, new_upd: str):
     item_entry: StockValue = get_item(item_id)
     item_entry.stock -= int(amount)
     if item_entry.stock < 0:
         raise InsufficientStockError
     try:
-        item_entry.last_upd = set_updated_str(item_entry.last_upd, item_upd, upd_op="sub")
+        item_entry.last_upd = set_updated_str(item_entry.last_upd, new_upd)
         db.set(item_id, msgpack.encode(item_entry))
     except redis.exceptions.ConnectionError:
         retry_connection()
@@ -143,24 +137,21 @@ def remove_amount(item_id: str, amount: int, item_upd: str = 'api'):
     return item_entry.stock
 
 
-def add_amount_bulk(message: dict, order_id: str):
+def add_amount_bulk(message: dict, new_upd: str):
     item_ids = list(message.keys())
     items = get_item_bulk(item_ids)
     stocks_upd = dict()
     retry_flag = False
     for i in range(len(items)):
         item : StockValue | None = msgpack.decode(items[i], type=StockValue) if items[i] else None
-        if is_duplicate_operation(item.last_upd, order_id, "add"):
+        if is_duplicate_operation(item.last_upd, new_upd):
             retry_flag = True
             break
         item.stock += int(message[item_ids[i]])
         stocks_upd[item_ids[i]] = msgpack.encode(
             StockValue(stock=item.stock, 
                     price=item.price, 
-                    last_upd=set_updated_str(item.last_upd,
-                                                order_id,
-                                                "add")
-                    ))
+                    last_upd=set_updated_str(item.last_upd, new_upd)))
     if not retry_flag:    
         try:
             db.mset(stocks_upd)
@@ -171,14 +162,14 @@ def add_amount_bulk(message: dict, order_id: str):
             raise RedisDBError
 
 
-def remove_amount_bulk(stock_remove: dict, order_id: str):
+def remove_amount_bulk(stock_remove: dict, new_upd: str):
     item_ids = list(stock_remove.keys())
     items = get_item_bulk(item_ids)
     stocks_upd = dict()
     retry_flag = False
     for i in range(len(items)):
         item : StockValue | None = msgpack.decode(items[i], type=StockValue) if items[i] else None
-        if is_duplicate_operation(item.last_upd, order_id, "sub"):
+        if is_duplicate_operation(item.last_upd, new_upd):
             retry_flag = True
             break
         item.stock -= int(stock_remove[item_ids[i]])
@@ -187,10 +178,7 @@ def remove_amount_bulk(stock_remove: dict, order_id: str):
         stocks_upd[item_ids[i]] = msgpack.encode(
             StockValue(stock=item.stock, 
                        price=item.price, 
-                       last_upd=set_updated_str(
-                           item.last_upd, 
-                           order_id,
-                           "sub")))
+                       last_upd=set_updated_str(item.last_upd, new_upd)))
     if not retry_flag:
         try:
             db.mset(stocks_upd)
