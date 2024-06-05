@@ -22,6 +22,6 @@ The Checkout feature is implemented using orchestration-based saga pattern. In a
 - Run the project using docker compose up --build
 
 
-> [!WARNING]
+ ## **⚠**Warning
 - Shutting down RabbitMQ will lead to failure of the system.
 - Shutting down gateways will lead to Bad Gateway error.
