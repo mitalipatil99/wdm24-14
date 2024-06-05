@@ -53,7 +53,7 @@ def get_user_db(user_id: str) -> UserValue | None:
 
 def create_user_db():
     key = str(uuid.uuid4())
-    value = msgpack.encode(UserValue(credit=0, last_upd="admin"))
+    value = msgpack.encode(UserValue(credit=0, last_upd="admin_add"))
     try:
         db.set(key, value)
     except redis.exceptions.ConnectionError:
@@ -67,7 +67,7 @@ def create_user_db():
 def batch_init_db(n: int, starting_money: int):
     n = int(n)
     starting_money = int(starting_money)
-    kv_pairs: dict[str, bytes] = {f"{i}": msgpack.encode(UserValue(credit=starting_money, last_upd="admin"))
+    kv_pairs: dict[str, bytes] = {f"{i}": msgpack.encode(UserValue(credit=starting_money, last_upd="admin_add"))
                                   for i in range(n)}
     try:
         db.mset(kv_pairs)
@@ -78,33 +78,35 @@ def batch_init_db(n: int, starting_money: int):
         raise RedisDBError(Exception)
 
 
-def add_credit_db(user_id: str, amount: int, user_upd: str = "api") -> UserValue:
+def add_credit_db(user_id: str, amount: int, user_upd: str) -> UserValue:
+    user_upd = f"{user_upd}_add"
     user_entry: UserValue =  get_user_db(user_id)
-    # update credit, serialize and update database
-    user_entry.credit += int(amount)
-    user_entry.last_upd = user_upd
-    try:
-        db.set(user_id, msgpack.encode(user_entry))
-    except redis.exceptions.ConnectionError:
-        retry_connection()
-        db.set(user_id, msgpack.encode(user_entry))
-    except redis.exceptions.RedisError:
-        raise RedisDBError(Exception)
+    if user_entry.last_upd != user_upd or user_upd == "api_add":
+        user_entry.credit += int(amount)
+        user_entry.last_upd = user_upd
+        try:
+            db.set(user_id, msgpack.encode(user_entry))
+        except redis.exceptions.ConnectionError:
+            retry_connection()
+            db.set(user_id, msgpack.encode(user_entry))
+        except redis.exceptions.RedisError:
+            raise RedisDBError(Exception)
     return user_entry
 
 
-def remove_credit_db(user_id: str, amount: int, user_upd: str = "api"):
+def remove_credit_db(user_id: str, amount: int, user_upd: str):
+    user_upd = f"{user_upd}_sub"
     user_entry: UserValue = get_user_db(user_id)
-    # update credit, serialize and update database
-    user_entry.credit -= int(amount)
-    if user_entry.credit < 0:
-        raise InsufficientCreditError(Exception)
-    try:
-        user_entry.last_upd = user_upd
-        db.set(user_id, msgpack.encode(user_entry))
-    except redis.exceptions.ConnectionError:
-        retry_connection()
-        db.set(user_id, msgpack.encode(user_entry))
-    except redis.exceptions.RedisError:
-        raise RedisDBError(Exception)  
+    if user_entry.last_upd != user_upd or user_upd == "api_sub":
+        user_entry.credit -= int(amount)
+        if user_entry.credit < 0:
+            raise InsufficientCreditError(Exception)
+        try:
+            user_entry.last_upd = user_upd
+            db.set(user_id, msgpack.encode(user_entry))
+        except redis.exceptions.ConnectionError:
+            retry_connection()
+            db.set(user_id, msgpack.encode(user_entry))
+        except redis.exceptions.RedisError:
+            raise RedisDBError(Exception)  
     return user_entry

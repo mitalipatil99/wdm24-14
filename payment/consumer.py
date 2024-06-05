@@ -62,7 +62,11 @@ class RabbitMQConsumer:
                 self.publish_message(properties, generate_response(STATUS_SUCCESS, response))
 
             elif msg['action'] == "add_funds":
-                user_entry = add_credit_db(msg['user_id'], msg['amount'])
+                if "order_id" in msg:
+                    upd_usr = msg["order_id"]
+                else:
+                    upd_usr = "api"
+                user_entry = add_credit_db(msg['user_id'], msg['amount'], upd_usr)
                 response = {
                     "credit": user_entry.credit,
                     "last_upd": user_entry.last_upd
@@ -70,7 +74,11 @@ class RabbitMQConsumer:
                 self.publish_message(properties, generate_response(STATUS_SUCCESS, response))
 
             elif msg['action'] == "remove_credit":
-                user_entry = remove_credit_db(msg['user_id'], msg['amount'])
+                if "order_id" in msg:
+                    upd_usr = msg["order_id"]
+                else:
+                    upd_usr = "api"
+                user_entry = remove_credit_db(msg['user_id'], msg['amount'], upd_usr)
                 response = {
                     "credit": user_entry.credit,
                     "last_upd": user_entry.last_upd

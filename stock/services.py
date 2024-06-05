@@ -4,11 +4,10 @@ import atexit
 import uuid
 import redis
 from msgspec import msgpack
-import logging
-
 from config import *
+
 from model import StockValue
-from exceptions import *
+from exceptions import RedisDBError, ItemNotFoundError, InsufficientStockError
 
 def connect_redis():
     db_conn: redis.Redis = redis.Redis(host=os.environ['REDIS_HOST'],
@@ -57,7 +56,7 @@ def is_duplicate_operation(last_upd_str: str, new_upd: str, upd_op: str):
             return False
     else:
         return False
-        
+
 
 def get_item(item_id: str) -> str:
     try:
@@ -69,7 +68,6 @@ def get_item(item_id: str) -> str:
         raise RedisDBError
     entry: StockValue | None = msgpack.decode(entry, type=StockValue) if entry else None
     if entry is None:
-        # if item does not exist in the database; abort
         raise ItemNotFoundError
     return entry
 
@@ -97,7 +95,7 @@ def set_new_item(value: int):
         raise RedisDBError
     return key
 
-
+# Check functionality: We are setting same price and stock amount for each item??
 def set_users(n: int, starting_stock: int, item_price: int, item_upd: str = 'admin_add'):
     n = int(n)
     starting_stock = int(starting_stock)
@@ -111,6 +109,7 @@ def set_users(n: int, starting_stock: int, item_price: int, item_upd: str = 'adm
         db.mset(kv_pairs)
     except redis.exceptions.RedisError:
         raise RedisDBError
+    
 
 
 def add_amount(item_id: str, amount: int, item_upd: str = 'api'):
@@ -131,10 +130,10 @@ def add_amount(item_id: str, amount: int, item_upd: str = 'api'):
 def remove_amount(item_id: str, amount: int, item_upd: str = 'api'):
     item_entry: StockValue = get_item(item_id)
     item_entry.stock -= int(amount)
-    item_entry.last_upd = set_updated_str(item_entry.last_upd, item_upd, upd_op="sub")
     if item_entry.stock < 0:
         raise InsufficientStockError
     try:
+        item_entry.last_upd = set_updated_str(item_entry.last_upd, item_upd, upd_op="sub")
         db.set(item_id, msgpack.encode(item_entry))
     except redis.exceptions.ConnectionError:
         retry_connection()
@@ -162,7 +161,7 @@ def add_amount_bulk(message: dict, order_id: str):
                                                 order_id,
                                                 "add")
                     ))
-    if not retry_flag:
+    if not retry_flag:    
         try:
             db.mset(stocks_upd)
         except redis.exceptions.ConnectionError:
@@ -191,8 +190,7 @@ def remove_amount_bulk(stock_remove: dict, order_id: str):
                        last_upd=set_updated_str(
                            item.last_upd, 
                            order_id,
-                           "sub"),
-                           ))
+                           "sub")))
     if not retry_flag:
         try:
             db.mset(stocks_upd)
@@ -201,4 +199,3 @@ def remove_amount_bulk(stock_remove: dict, order_id: str):
             db.mset(stocks_upd)
         except redis.exceptions.RedisError:
             raise RedisDBError
-
