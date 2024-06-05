@@ -53,7 +53,7 @@ def get_user_db(user_id: str) -> UserValue | None:
 
 def create_user_db():
     key = str(uuid.uuid4())
-    value = msgpack.encode(UserValue(credit=0, last_upd="admin_add"))
+    value = msgpack.encode(UserValue(credit=0, last_upd="api_add"))
     try:
         db.set(key, value)
     except redis.exceptions.ConnectionError:
@@ -67,7 +67,7 @@ def create_user_db():
 def batch_init_db(n: int, starting_money: int):
     n = int(n)
     starting_money = int(starting_money)
-    kv_pairs: dict[str, bytes] = {f"{i}": msgpack.encode(UserValue(credit=starting_money, last_upd="admin_add"))
+    kv_pairs: dict[str, bytes] = {f"{i}": msgpack.encode(UserValue(credit=starting_money, last_upd="api_add"))
                                   for i in range(n)}
     try:
         db.mset(kv_pairs)
